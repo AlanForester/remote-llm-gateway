@@ -34,6 +34,6 @@ MIT (см. [LICENSE](LICENSE))
 
 - Репозиторий: https://github.com/AlanForester/remote-llm-gateway
 - `ARCHITECTURE.md` — подробная архитектура и план
-- `HABR_ARTICLE.md` — черновик статьи на Хабр
+- `HABR_ARTICLE.md` — черновик статьи на Хабр (содержит контакт https://t.me/alanforester)
 
 **Статус:** активная разработка (октябрь 2026)
