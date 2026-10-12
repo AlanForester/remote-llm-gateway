@@ -1,0 +1,273 @@
+# Push и pull request: сборка и тесты Go и плагина.
+# Push в main: образы gateway, api, admin в GHCR с тегом SHA коммита и тегом main.
+# Тег vMAJOR.MINOR.PATCH: те же образы с номером версии и GitHub Release
+# (бинарники remote-llm, пакет .vsix, ссылки на образы).
+#
+# Реестр и релиз используют встроенный GITHUB_TOKEN. Отдельный токен
+# в репозиторий и в файлы workflow не кладётся.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*.*.*"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  test:
+    name: Go и плагин
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Поставить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Поставить Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Проверить форматирование
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Собрать бинарники
+        run: |
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/build/gateway ./gateway/cmd/gateway
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/build/api ./api/cmd/api
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/build/admin ./admin/cmd/admin
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/build/remote-llm ./cmd/remote-llm
+
+      - name: Проверить и протестировать плагин
+        run: |
+          node --check plugin/src/extension.js
+          node --check plugin/src/sync.js
+          node --check plugin/src/ws.js
+          node --test plugin/src/*.test.js
+
+  images:
+    name: Образ ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: test
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gateway
+            cmd: ./gateway/cmd/gateway
+            port: "8080"
+            git: "1"
+          - name: api
+            cmd: ./api/cmd/api
+            port: "8082"
+            git: "0"
+          - name: admin
+            cmd: ./admin/cmd/admin
+            port: "8081"
+            git: "0"
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Проверить тег версии
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Нужен тег vMAJOR.MINOR.PATCH, сейчас ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Имя образа
+        id: image
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${owner}/remote-llm-gateway/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Войти в GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Теги образа
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{raw}}
+
+      - name: QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Собрать и опубликовать
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          build-args: |
+            CMD=${{ matrix.cmd }}
+            PORT=${{ matrix.port }}
+            INSTALL_GIT=${{ matrix.git }}
+
+  binaries:
+    name: Бинарники и vsix
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Проверить тег версии
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Нужен тег vMAJOR.MINOR.PATCH, сейчас ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        id: version
+
+      - name: Поставить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Собрать remote-llm
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          while read -r goos goarch; do
+            ext=""
+            if [ "$goos" = "windows" ]; then
+              ext=".exe"
+            fi
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "dist/remote-llm_${VERSION}_${goos}_${goarch}${ext}" \
+              ./cmd/remote-llm
+          done <<'EOF'
+          linux amd64
+          linux arm64
+          darwin amd64
+          darwin arm64
+          windows amd64
+          EOF
+
+      - name: Поставить Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Собрать vsix
+        working-directory: plugin
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cp ../LICENSE LICENSE
+          npx --yes @vscode/vsce@4.0.0 package "$VERSION" \
+            --no-git-tag-version \
+            --no-update-package-json \
+            --no-dependencies \
+            --out "../dist/remote-llm-gateway-${VERSION}.vsix"
+
+      - name: Сохранить артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [images, binaries]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Скачать артефакты
+        uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+
+      - name: Описать релиз
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          version="${VERSION#v}"
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          prefix="ghcr.io/${owner}/remote-llm-gateway"
+          cat > /tmp/release.md <<EOF
+          Версия ${version}.
+
+          В этом релизе бинарники remote-llm и пакет плагина remote-llm-gateway-${version}.vsix.
+
+          Образы этой версии:
+
+          - ${prefix}/gateway:${version}
+          - ${prefix}/api:${version}
+          - ${prefix}/admin:${version}
+
+          Те же образы отмечены SHA ${GITHUB_SHA} и тегом ${VERSION}.
+          EOF
+
+      - name: Опубликовать релиз
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file /tmp/release.md

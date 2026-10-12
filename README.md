@@ -34,7 +34,7 @@
 <details>
 <summary><strong>Плагин для VS Code и Cursor</strong></summary>
 
-Плагин **Remote LLM Gateway** показывает обычный чат с агентом: проект открыт локально, правки видны в редакторе. Локальный процесс `grok` или `claude` он не запускает. В начале сессии уходят токен, пользователь и путь проекта.
+Плагин **Remote LLM Gateway** показывает чат в боковой панели Explorer. Проект открыт локально: в начале сессии файлы уходят на шлюз, после ответа правки записываются обратно в редактор. Локальный процесс `grok` или `claude` он не запускает.
 
 Если в админке этому пользователю назначена LLM, плагин показывает её. Если назначения нет, модель выбирается в интерфейсе.
 
@@ -45,7 +45,7 @@
 <details>
 <summary><strong>CLI <code>remote-llm</code></strong></summary>
 
-`remote-llm` смотрит в тот же шлюз, что и плагин. Короткое имя `llm` не используется: оно слишком общее.
+`remote-llm` смотрит в тот же шлюз, что и плагин. Из каталога проекта он отправляет файлы на сервер и после ответа записывает правки обратно. Флаг `--no-sync` этого не делает. Короткое имя `llm` не используется: оно слишком общее.
 
 Принудительная модель из админки отображается и здесь.
 
@@ -97,7 +97,7 @@
 | Claude Code | `claude agent serve` |
 | GPT | OpenAI Responses API и tool calling в самом шлюзе. Ключ один, на сервере |
 
-MCP, включая memory, работает на шлюзе.
+У GPT шлюз сам даёт инструменты: прочитать, записать и показать файлы сессии, выполнить команду в её каталоге. Дополнительные инструменты берутся из stdio MCP, список серверов лежит в `MCP_CONFIG`. Grok Build и Claude Code по-прежнему берут свои MCP-серверы из настройки на машине шлюза.
 
 </details>
 
@@ -109,13 +109,41 @@ MCP, включая memory, работает на шлюзе.
 - Сервер шлюза с установленными CLI тех агентов, которые вы включаете: `grok`, `claude`.
 - Одна подписка или один ключ провайдера на шлюзе.
 - Регистрация и вход в Claude и в остальные такие сервисы с того же сервера, где стоит шлюз.
-- Redis для состояния сессий.
+- Redis, когда шлюз, админка и API работают отдельными процессами или на нескольких машинах. Локальный `go run` без Redis хранит пользователей, лимиты и прокси в `DATA_FILE`. Сессии WebSocket в Redis не пишутся: это живой разговор, он не переживает рестарт процесса.
 
 ---
 
 ## Установка
 
-Репозиторий в активной разработке. Готового релиза, образов и пакета плагина ещё нет. Каталоги и план уже лежат в дереве.
+Готового релиза, образов и пакета в Marketplace ещё нет. Сервисы уже запускаются из исходников.
+
+```bash
+cp .env.example .env
+# задайте ADMIN_TOKEN в .env
+set -a && source .env && set +a
+go run ./gateway/cmd/gateway
+go run ./admin/cmd/admin
+go run ./api/cmd/api
+```
+
+Админка открывается на `http://127.0.0.1:8081`. Токен пользователя показывается один раз при создании. Дальше:
+
+```bash
+go run ./cmd/remote-llm --gateway http://127.0.0.1:8080 --token <токен>
+```
+
+`GATEWAY_ECHO=1` в `.env` отвечает эхом и не требует установленных `grok` и `claude`. Для настоящих агентов уберите эту переменную: шлюз запустит `grok agent serve` или `claude agent serve` и пошлёт GPT в OpenAI Responses API. Вход в Claude и остальные такие сервисы делается на машине шлюза.
+
+Один внешний вход описан в [`deploy/nginx/nginx.conf`](deploy/nginx/nginx.conf). Nginx принимает обычные запросы и WebSocket, а процессы слушают localhost:
+
+| Путь | Куда |
+|---|---|
+| `/`, `/login`, `/users`, `/proxy` | админка |
+| `/v1/`, `/ws/` | шлюз, включая сессию ACP |
+| `/api/` | API, префикс снаружи снимается |
+| `/health`, `/health/admin`, `/health/api` | проверки трёх процессов |
+
+Тогда `GATEWAY_URL` указывает на nginx, без порта `8080`. В `.env.example` есть закомментированный вариант.
 
 Монорепозиторий:
 
@@ -132,14 +160,10 @@ MCP, включая memory, работает на шлюзе.
 
 ## Быстрый старт
 
-После первого релиза цепочка такая:
-
-1. Поднять шлюз, `api`, админку и Redis.
-2. В админке завести пользователя, токен и при необходимости модель и прокси.
-3. В плагине указать адрес шлюза и токен. Либо запустить `remote-llm` с тем же доступом.
-4. Открыть локальный проект и начать сессию. Агент выполнится на сервере, в worktree этой сессии.
-
-Сейчас эти шаги ещё не собраны в одну команду.
+1. Поднять шлюз, `api` и админку командами из раздела «Установка». Состояние лежит в `DATA_FILE`, Redis для этого шага не нужен.
+2. В админке завести пользователя. При необходимости задать модель, лимит токенов, период сброса и прокси.
+3. В плагине указать `remoteLlm.gatewayUrl` и `remoteLlm.gatewayToken`. Чат находится в панели Explorer, пункт Remote LLM. Команда «Remote LLM: показать назначенную модель» только показывает модель и расход. Либо запустить `remote-llm` из каталога проекта с тем же токеном.
+4. Сессия агента выполняется на сервере, в отдельном каталоге этого пользователя и проекта. Файлы проекта уходят туда при старте, изменённые файлы возвращаются после ответа.
 
 ---
 
@@ -153,7 +177,7 @@ MCP, включая memory, работает на шлюзе.
 | Лимит токенов и период сброса | Админка | Сколько токенов доступно пользователю, пока счётчик не обнулится |
 | Исходящий прокси | Админка и `.env` | Через какой выход агенты ходят к API провайдеров |
 
-Серверные части рассчитаны на Go. Плагин на TypeScript.
+Серверные части рассчитаны на Go. Плагин на JavaScript.
 
 ---
 
@@ -169,15 +193,75 @@ MCP, включая memory, работает на шлюзе.
 
 ## Разработка
 
-Сборка, тесты, образы `gateway`, `api` и `admin`, `docker-compose` и релизы описаны в [`TODO.md`](TODO.md). Туда же входят GitHub Actions и бейджи статуса CI и последнего релиза: их в шапке пока нет, пайплайна ещё нет.
+Push и pull request запускают [`.github/workflows/ci.yml`](.github/workflows/ci.yml): `gofmt`, `go vet`, `go test ./...`, проверка и тесты плагина, сборка `gateway`, `api`, `admin` и `remote-llm`. На pull request job образов проверяет сборку `linux/amd64`.
+
+Push в `main` публикует образы `linux/amd64` и `linux/arm64` в GitHub Container Registry. Тег образа — SHA коммита, плюс подвижный тег `main`:
+
+```text
+ghcr.io/alanforester/remote-llm-gateway/gateway:<sha>
+ghcr.io/alanforester/remote-llm-gateway/api:<sha>
+ghcr.io/alanforester/remote-llm-gateway/admin:<sha>
+```
+
+Git-тег `vMAJOR.MINOR.PATCH` публикует те же образы с номером версии (`1.2.3` и `v1.2.3`) и тем же SHA. Этот тег собирает GitHub Release: бинарники `remote-llm` для Linux, macOS и Windows и пакет плагина `.vsix`. В описании релиза лежат имена образов этой версии.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Вход в реестр и создание релиза идут через `GITHUB_TOKEN`, который выдаёт сам GitHub Actions. В workflow у этих шагов права `packages: write` и `contents: write`. Отдельного токена в файлах репозитория нет. В Settings → Actions → General у репозитория должно быть разрешено чтение и запись для `GITHUB_TOKEN`, иначе публикация пакета остановится на правах.
+
+Образ собирается из [`deploy/Dockerfile`](deploy/Dockerfile). Без `REDIS_URL` три процесса делят файл `/data/gateway.json`. Процесс в контейнере — пользователь `65532`. В образе `gateway` есть `git`: worktree сессии вызывает его. `grok` и `claude` в образ не входят, их ставят на машине шлюза. Админке нужен `ADMIN_TOKEN`, без него процесс сразу завершается.
+
+Бейджи CI и релиза в шапке появятся после зелёного прогона и настоящего релиза.
 
 Pull request'ы можно предлагать.
 
 ---
 
+## Выкладка
+
+На одной машине стек поднимается из [`deploy/docker-compose.yml`](deploy/docker-compose.yml). Внутри Redis, `gateway`, `api`, `admin`, nginx, Prometheus и Grafana. Секреты читаются из `.env` рядом с репозиторием, в образ они не запекаются.
+
+```bash
+cp .env.example .env
+# свой ADMIN_TOKEN и при необходимости OPENAI_API_KEY, OUTBOUND_PROXY
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+```
+
+Админка открывается на порту `HTTP_PORT` (по умолчанию 80). `GATEWAY_URL` для плагина и CLI — этот адрес, без `:8080`. Grafana слушает `127.0.0.1:3000`, Prometheus — `127.0.0.1:9090`. Дашборд называется Remote LLM Gateway. Метрики процессов: `remote_llm_http_requests_total`, `remote_llm_tokens_total`, `remote_llm_quota_denied_total`, `remote_llm_sessions`. Nginx их наружу не отдаёт.
+
+`IMAGE_TAG=local` собирает образы из [`deploy/Dockerfile`](deploy/Dockerfile). После публикации в GHCR тот же файл можно поднять без сборки:
+
+```bash
+IMAGE_TAG=0.1.0 docker compose --env-file .env -f deploy/docker-compose.yml pull
+IMAGE_TAG=0.1.0 docker compose --env-file .env -f deploy/docker-compose.yml up -d
+```
+
+`GATEWAY_ECHO=1` в `.env` оставляет эхо. Для настоящих агентов поставьте `0`: `grok` и `claude` должны быть доступны процессу шлюза.
+
+Обновление на VPS — сменить `IMAGE_TAG` на SHA коммита с `main` или на номер релиза и снова выполнить `pull` и `up -d`. Redis и каталог worktree лежат в томах `redis-data` и `workspaces`, их `up` не стирает.
+
+Kubernetes-манифесты — [`deploy/k8s`](deploy/k8s). Туда входят те же процессы. Секрет в репозиторий не кладётся:
+
+```bash
+kubectl apply -f deploy/k8s/namespace.yaml
+kubectl -n remote-llm create secret generic remote-llm \
+  --from-literal=ADMIN_TOKEN=... \
+  --from-literal=OPENAI_API_KEY=... \
+  --from-literal=OUTBOUND_PROXY= \
+  --from-literal=GRAFANA_ADMIN_PASSWORD=...
+kubectl apply -k deploy
+```
+
+Образ по умолчанию — тег `main`. Другую версию задаёт `newTag` в [`deploy/kustomization.yaml`](deploy/kustomization.yaml). Сервис `nginx` типа LoadBalancer открывает порт 80. На VPS без балансировщика смените тип на NodePort. Grafana остаётся внутри кластера: `kubectl -n remote-llm port-forward svc/grafana 3000:3000`. В манифесте `GATEWAY_ECHO=1`; для боевых агентов поменяйте значение в `deploy/k8s/apps.yaml` и примените kustomization снова. Если кластер не скачивает образ, откройте пакет GHCR или добавьте `imagePullSecret`.
+
+---
+
 ## Ограничения
 
-- Первого релиза ещё нет: плагин не опубликован, бинарник `remote-llm` не выкладывается.
+- Релиза на GitHub ещё нет, пока не поставлен тег `vMAJOR.MINOR.PATCH`. Плагин в Marketplace не опубликован.
 - Вход в аккаунт провайдера делается на сервере шлюза, с рабочей машины пользователя этот вход не проходит.
 - GPT подключается через OpenAI Responses API в шлюзе. Отдельного процесса Codex нет.
 

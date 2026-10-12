@@ -1,0 +1,136 @@
+# Шлюз, админка, API, Redis и один вход nginx.
+# Prometheus забирает /metrics с процессов, Grafana показывает дашборд.
+#
+# Из корня репозитория:
+#   cp .env.example .env
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+#
+# IMAGE_TAG=main берёт образы из GHCR. По умолчанию образ собирается локально.
+
+name: remote-llm
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  gateway:
+    image: ghcr.io/alanforester/remote-llm-gateway/gateway:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        CMD: ./gateway/cmd/gateway
+        PORT: "8080"
+        INSTALL_GIT: "1"
+    environment:
+      GATEWAY_ADDR: ":8080"
+      REDIS_URL: redis://redis:6379/0
+      WORKSPACES_DIR: /data/workspaces
+      GATEWAY_ECHO: ${GATEWAY_ECHO:-1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OUTBOUND_PROXY: ${OUTBOUND_PROXY:-}
+      MCP_CONFIG: ${MCP_CONFIG:-}
+      GROK_COMMAND: ${GROK_COMMAND:-}
+      CLAUDE_COMMAND: ${CLAUDE_COMMAND:-}
+    volumes:
+      - workspaces:/data/workspaces
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/alanforester/remote-llm-gateway/api:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        CMD: ./api/cmd/api
+        PORT: "8082"
+        INSTALL_GIT: "0"
+    environment:
+      API_ADDR: ":8082"
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  admin:
+    image: ghcr.io/alanforester/remote-llm-gateway/admin:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        CMD: ./admin/cmd/admin
+        PORT: "8081"
+        INSTALL_GIT: "0"
+    environment:
+      ADMIN_ADDR: ":8081"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+      REDIS_URL: redis://redis:6379/0
+      OUTBOUND_PROXY: ${OUTBOUND_PROXY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx/nginx.compose.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      - gateway
+      - api
+      - admin
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - gateway
+      - api
+      - admin
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  workspaces:
+  prometheus-data:
+  grafana-data:

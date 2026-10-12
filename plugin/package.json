@@ -1,0 +1,55 @@
+{
+  "name": "remote-llm-gateway",
+  "displayName": "Remote LLM Gateway",
+  "description": "Чат с Remote LLM Gateway. Проект остаётся локально, агент работает на шлюзе, правки возвращаются в редактор.",
+  "version": "0.1.0",
+  "publisher": "alanforester",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlanForester/remote-llm-gateway.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Chat"],
+  "main": "./src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "remoteLlm.showModel",
+        "title": "Remote LLM: показать назначенную модель"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "remoteLlm.chat",
+          "name": "Remote LLM"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Remote LLM Gateway",
+      "properties": {
+        "remoteLlm.useRemoteGateway": {
+          "type": "boolean",
+          "default": true,
+          "description": "Подключаться к шлюзу вместо локального CLI."
+        },
+        "remoteLlm.gatewayUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "Адрес шлюза, http или ws."
+        },
+        "remoteLlm.gatewayToken": {
+          "type": "string",
+          "default": "",
+          "description": "Токен пользователя из админки."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# В контекст сборки попадают исходники Go. Секреты и черновики — нет.
+.git
+.github
+.env
+.env.*
+data
+deploy
+docs
+tmp
+bin
+plugin
+*.md
+*.vsix
+ЧТО_ДЕЛАТЬ.md

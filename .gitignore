@@ -1,4 +1,5 @@
 # Локальные черновики и секреты
+docs/articles/
 HABR_ARTICLE.md
 ЧТО_ДЕЛАТЬ.md
 .env
@@ -48,3 +49,4 @@ pnpm-debug.log*
 # Локальные данные
 *.log
 dump.rdb
+data/

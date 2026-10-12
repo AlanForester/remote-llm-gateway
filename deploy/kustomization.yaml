@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: remote-llm
+resources:
+  - k8s/namespace.yaml
+  - k8s/redis.yaml
+  - k8s/apps.yaml
+  - k8s/nginx.yaml
+  - k8s/monitoring.yaml
+configMapGenerator:
+  - name: nginx-conf
+    files:
+      - nginx.conf=nginx/nginx.compose.conf
+  - name: prometheus-conf
+    files:
+      - prometheus.yml=prometheus/prometheus.yml
+  - name: grafana-datasource
+    files:
+      - prometheus.yml=grafana/provisioning/datasources/prometheus.yml
+  - name: grafana-provider
+    files:
+      - dashboards.yml=grafana/provisioning/dashboards/dashboards.yml
+  - name: grafana-dashboard
+    files:
+      - gateway.json=grafana/dashboards/gateway.json
+generatorOptions:
+  disableNameSuffixHash: true
+images:
+  - name: ghcr.io/alanforester/remote-llm-gateway/gateway
+    newTag: main
+  - name: ghcr.io/alanforester/remote-llm-gateway/api
+    newTag: main
+  - name: ghcr.io/alanforester/remote-llm-gateway/admin
+    newTag: main
