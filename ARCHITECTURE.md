@@ -1,4 +1,4 @@
-# План реализации: Grok Build VS Code Plugin + Remote LLM Gateway
+# План реализации: Remote LLM Gateway (CLI `llm`)
 
 ## 1. Цель проекта
 
@@ -19,7 +19,8 @@
 
 ### Компоненты
 
-1. **Remote LLM Gateway (Server)**
+1. **`cmd/llm/`** — CLI-утилита `llm` (TUI, аналог `grok` / `claude`)
+2. **Remote LLM Gateway (Server)**
    - Написан на Go или Node.js/TypeScript (рекомендуется Go для производительности и низкого потребления памяти).
    - Запускает несколько экземпляров `grok agent serve` / `grok agent headless` (или через Docker).
    - Предоставляет WebSocket endpoint (`/ws/{sessionId}`) для подключения клиентов.
