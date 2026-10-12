@@ -1,4 +1,4 @@
-# План реализации: Remote LLM Gateway (CLI `llm`)
+# План реализации: Remote LLM Gateway (CLI `remote-llm`)
 
 ## 1. Цель проекта
 
@@ -19,7 +19,7 @@
 
 ### Компоненты
 
-1. **`cmd/llm/`** — CLI-утилита `llm` (TUI, аналог `grok` / `claude`)
+1. **`cmd/remote-llm/`** — CLI-утилита `remote-llm` (TUI, аналог `grok` / `claude`)
 2. **Remote LLM Gateway (Server)**
    - Написан на Go или Node.js/TypeScript (рекомендуется Go для производительности и низкого потребления памяти).
    - Запускает несколько экземпляров `grok agent serve` / `grok agent headless` (или через Docker).
