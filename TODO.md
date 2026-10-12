@@ -18,7 +18,8 @@
 - [x] Сборка образов `gateway`, `api` и `admin`. Публикация в GitHub Container Registry: тег по SHA коммита на `main` и semver-тег на релизе. Сами образы появляются после push в `main` или тега.
 - [x] Релиз по git-тегу: GitHub Release, бинарники CLI `remote-llm` под целевые ОС, пакет VS Code-плагина (`.vsix`), образы с версией релиза.
 - [x] Секреты пайплайна не лежат в репозитории. Реестр и релиз используют встроенный `GITHUB_TOKEN` Actions.
-- [ ] **Бейджи в `README.md`.** Статус CI, последний релиз и лицензия (MIT, ссылка на `LICENSE`). Плюс ряд как на референсе: Agents (Grok Build · Codex · Claude Code), VS Code Extension, Cursor Extension. Ссылки CI и релиза ведут на GitHub Actions и релизы репозитория.
+- [x] **Бейджи CI, релиза и MIT** в `README.md`. Ссылки ведут на Actions, релизы и `LICENSE`.
+- [ ] Бейджи Agents, VS Code Marketplace и Cursor. Ставить после публикации расширения. В подписи агентов только то, что шлюз запускает: Grok Build, Claude Code, GPT.
 
 ## Инфраструктура деплоя и образы
 

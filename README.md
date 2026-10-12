@@ -1,6 +1,8 @@
 # Remote LLM Gateway
 
 [![Лицензия: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml)
+[![Релиз](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
 
 > **Remote LLM Gateway** — один шлюз для Grok Build, Claude Code и GPT. Плагин в VS Code и Cursor и CLI `remote-llm` работают с локальным проектом, а агенты, инструменты и MCP выполняются на сервере. Проект не связан с xAI, Anthropic, OpenAI и Meta и не представляет их. Имена *Grok*, *Grok Build*, *Claude Code*, *Codex* и *Muse Code* используются только чтобы обозначить совместимость.
 
@@ -115,7 +117,7 @@
 
 ## Установка
 
-Готового релиза, образов и пакета в Marketplace ещё нет. Сервисы уже запускаются из исходников.
+Релиз [v0.1.0](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.0) содержит бинарники `remote-llm`, пакет `.vsix` и образы этой версии в GHCR. Плагин в Marketplace не опубликован. Локально сервисы запускаются из исходников.
 
 ```bash
 cp .env.example .env
@@ -214,7 +216,7 @@ git push origin v0.1.0
 
 Образ собирается из [`deploy/Dockerfile`](deploy/Dockerfile). Без `REDIS_URL` три процесса делят файл `/data/gateway.json`. Процесс в контейнере — пользователь `65532`. В образе `gateway` есть `git`: worktree сессии вызывает его. `grok` и `claude` в образ не входят, их ставят на машине шлюза. Админке нужен `ADMIN_TOKEN`, без него процесс сразу завершается.
 
-Бейджи CI и релиза в шапке появятся после зелёного прогона и настоящего релиза.
+В шапке стоят бейджи лицензии, CI и релиза.
 
 Pull request'ы можно предлагать.
 
@@ -261,7 +263,7 @@ kubectl apply -k deploy
 
 ## Ограничения
 
-- Релиза на GitHub ещё нет, пока не поставлен тег `vMAJOR.MINOR.PATCH`. Плагин в Marketplace не опубликован.
+- Плагин в Marketplace не опубликован. Готовый `.vsix` лежит в релизе [v0.1.0](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.0).
 - Вход в аккаунт провайдера делается на сервере шлюза, с рабочей машины пользователя этот вход не проходит.
 - GPT подключается через OpenAI Responses API в шлюзе. Отдельного процесса Codex нет.
 
