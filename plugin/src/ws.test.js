@@ -3,6 +3,12 @@ const assert = require("node:assert/strict");
 const http = require("http");
 const ws = require("./ws");
 
+test("socket url keeps the token out of the query", () => {
+  const url = ws.gatewaySocketURL("https://gateway.example/base", "abc");
+  assert.equal(url, "wss://gateway.example/base/ws/abc");
+  assert.equal(url.includes("token"), false);
+});
+
 test("client frame roundtrip and echo", async () => {
   const server = http.createServer();
   server.on("upgrade", (req, socket) => {

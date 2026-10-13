@@ -72,8 +72,9 @@ func TestForcedModelQuotaAndSocket(t *testing.T) {
 		t.Fatalf("%+v", created)
 	}
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/" + created.SessionID + "?token=" + token
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/" + created.SessionID
+	header := http.Header{"Authorization": []string{"Bearer " + token}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +167,10 @@ func TestSyncFiles(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
+	if created.WorkspaceDir != "" {
+		t.Fatalf("server path leaked: %s", created.WorkspaceDir)
+	}
+	created.WorkspaceDir = onlyChildDir(t, filepath.Join(dir, "work"))
 
 	put := bytes.NewBufferString(`{"files":[{"path":"main.txt","content":"hello"},{"path":"../etc/passwd","content":"x"}]}`)
 	bad, _ := http.NewRequest(http.MethodPut, ts.URL+"/v1/sessions/"+created.SessionID+"/files", put)
@@ -280,6 +285,10 @@ func TestCollectAndApplyRoundTrip(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
+	if created.WorkspaceDir != "" {
+		t.Fatalf("server path leaked: %s", created.WorkspaceDir)
+	}
+	created.WorkspaceDir = onlyChildDir(t, filepath.Join(dir, "work"))
 	snap, err := filesync.Collect(local)
 	if err != nil {
 		t.Fatal(err)
@@ -327,6 +336,18 @@ func TestCollectAndApplyRoundTrip(t *testing.T) {
 	}
 }
 
+func onlyChildDir(t *testing.T, root string) string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !entries[0].IsDir() {
+		t.Fatalf("work root has %d entries", len(entries))
+	}
+	return filepath.Join(root, entries[0].Name())
+}
+
 func TestPluginWebSocketClient(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")
@@ -367,8 +388,8 @@ func TestPluginWebSocketClient(t *testing.T) {
 	script := `
 const ws = require(process.env.WS_CLIENT);
 (async () => {
-  const target = process.env.GATEWAY_HTTP.replace(/^http/, "ws") + "/ws/" + process.env.SESSION_ID + "?token=" + encodeURIComponent(process.env.GATEWAY_TOKEN);
-  const client = await ws.connect(target);
+  const target = process.env.GATEWAY_HTTP.replace(/^http/, "ws") + "/ws/" + process.env.SESSION_ID;
+  const client = await ws.connect(target, { Authorization: "Bearer " + process.env.GATEWAY_TOKEN });
   client.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/prompt", params: { text: "hi" } }));
   const text = await client.next();
   if (!text.includes("echo: hi")) {

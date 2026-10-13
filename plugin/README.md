@@ -9,10 +9,9 @@
 | Настройка | Что делает |
 |---|---|
 | `remoteLlm.gatewayUrl` | Адрес шлюза, `http` или `ws` |
-| `remoteLlm.gatewayToken` | Токен пользователя из админки |
 | `remoteLlm.useRemoteGateway` | Подключаться к шлюзу |
 
-Команда «Remote LLM: показать назначенную модель» показывает модель и расход.
+Токен пользователя задаётся командой «Remote LLM: задать токен» и хранится в Secret Storage редактора, не в `settings.json`. Команда «Remote LLM: показать назначенную модель» показывает модель и расход.
 
 Репозиторий: https://github.com/AlanForester/remote-llm-gateway
 

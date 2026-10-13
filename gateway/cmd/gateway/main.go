@@ -7,10 +7,14 @@ import (
 	"strings"
 
 	"github.com/AlanForester/remote-llm-gateway/gateway/internal/server"
+	"github.com/AlanForester/remote-llm-gateway/internal/secrets"
 	"github.com/AlanForester/remote-llm-gateway/internal/store"
 )
 
 func main() {
+	if err := secrets.KeepProcClean(); err != nil {
+		log.Fatal(err)
+	}
 	st, err := store.OpenConfigured(env("DATA_FILE", "data/gateway.json"), os.Getenv("REDIS_URL"))
 	if err != nil {
 		log.Fatal(err)

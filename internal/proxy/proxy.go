@@ -6,17 +6,41 @@ package proxy
 
 import (
 	"bufio"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 )
 
+// Valid reports whether raw is empty or an http, https, or socks5 proxy URL.
+// Newlines and other schemes are rejected so the value cannot inject an
+// environment variable or a file URL.
+func Valid(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true
+	}
+	if strings.ContainsAny(raw, "\r\n\x00 \t") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Opaque != "" {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+		return true
+	default:
+		return false
+	}
+}
+
 // Pick chooses the proxy URL. envAt is the modification time of the env file.
 // A later env change overrides the admin value, and a later admin save overrides the file.
 func Pick(adminURL string, adminAt time.Time, envURL string, envAt time.Time, fallback string) string {
-	adminURL = strings.TrimSpace(adminURL)
-	envURL = strings.TrimSpace(envURL)
-	fallback = strings.TrimSpace(fallback)
+	adminURL = accepted(adminURL)
+	envURL = accepted(envURL)
+	fallback = accepted(fallback)
 	switch {
 	case envURL != "" && (adminURL == "" || envAt.After(adminAt)):
 		return envURL
@@ -70,6 +94,14 @@ func FileValue(path, key string) (string, time.Time, bool) {
 		val = trimQuotes(strings.TrimSpace(v))
 	}
 	return val, info.ModTime(), true
+}
+
+func accepted(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !Valid(raw) {
+		return ""
+	}
+	return raw
 }
 
 func trimQuotes(s string) string {

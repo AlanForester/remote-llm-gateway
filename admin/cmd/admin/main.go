@@ -7,10 +7,14 @@ import (
 	"strings"
 
 	"github.com/AlanForester/remote-llm-gateway/admin/internal/server"
+	"github.com/AlanForester/remote-llm-gateway/internal/secrets"
 	"github.com/AlanForester/remote-llm-gateway/internal/store"
 )
 
 func main() {
+	if err := secrets.KeepProcClean(); err != nil {
+		log.Fatal(err)
+	}
 	token := strings.TrimSpace(os.Getenv("ADMIN_TOKEN"))
 	if token == "" {
 		log.Fatal("ADMIN_TOKEN is required")

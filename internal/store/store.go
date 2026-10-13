@@ -184,6 +184,9 @@ func NormalizePeriod(every string) (string, error) {
 	if every == "" {
 		return "day", nil
 	}
+	if len(every) > 32 {
+		return "", ErrBadInput
+	}
 	switch every {
 	case "day", "week", "month":
 		return every, nil
@@ -197,9 +200,14 @@ func NormalizePeriod(every string) (string, error) {
 
 // CreateUser inserts a user and returns the plaintext access token once.
 func (s *Store) CreateUser(name, forcedModel, resetEvery string, tokenLimit int64, now time.Time) (User, string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return User{}, "", ErrBadInput
+	var err error
+	name, err = bounded(name, 80, false)
+	if err != nil {
+		return User{}, "", err
+	}
+	forcedModel, err = bounded(forcedModel, 120, true)
+	if err != nil {
+		return User{}, "", err
 	}
 	every, err := NormalizePeriod(resetEvery)
 	if err != nil {
@@ -248,14 +256,18 @@ func (s *Store) UpdateUser(id string, patch UserPatch, now time.Time) (User, err
 			return ErrNotFound
 		}
 		if patch.Name != nil {
-			name := strings.TrimSpace(*patch.Name)
-			if name == "" {
-				return ErrBadInput
+			name, err := bounded(*patch.Name, 80, false)
+			if err != nil {
+				return err
 			}
 			u.Name = name
 		}
 		if patch.ForcedModel != nil {
-			u.ForcedModel = strings.TrimSpace(*patch.ForcedModel)
+			forced, err := bounded(*patch.ForcedModel, 120, true)
+			if err != nil {
+				return err
+			}
+			u.ForcedModel = forced
 		}
 		if patch.TokenLimit != nil {
 			if *patch.TokenLimit < 0 {
@@ -491,6 +503,19 @@ func newToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func bounded(s string, max int, allowEmpty bool) (string, error) {
+	s = strings.TrimSpace(s)
+	if (s == "" && !allowEmpty) || len(s) > max {
+		return "", ErrBadInput
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return "", ErrBadInput
+		}
+	}
+	return s, nil
 }
 
 func newID() string {

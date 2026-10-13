@@ -5,14 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 // Prepare returns the server directory for this user and workspace.
-// When workspace is a git repository on this machine, the directory is a
-// detached worktree. Otherwise it is an empty directory keyed by the path.
+// The workspace string is only a key. It is not opened on the server, so a
+// client cannot point the session at an existing repository.
 func Prepare(root, userID, workspace string) (string, error) {
 	if root == "" {
 		root = "data/workspaces"
@@ -23,26 +22,10 @@ func Prepare(root, userID, workspace string) (string, error) {
 	if st, err := os.Stat(dest); err == nil && st.IsDir() {
 		return dest, nil
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", err
-	}
-	if workspace != "" && isGitRepo(workspace) {
-		cmd := exec.Command("git", "-C", workspace, "worktree", "add", "--detach", dest)
-		if err := cmd.Run(); err == nil {
-			return dest, nil
-		}
-		_ = os.RemoveAll(dest)
-	}
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		return "", err
 	}
 	return dest, nil
-}
-
-func isGitRepo(path string) bool {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--is-inside-work-tree")
-	out, err := cmd.Output()
-	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
 func sanitize(s string) string {

@@ -70,7 +70,50 @@ func SafePath(root, rel string) (string, error) {
 	if err != nil || back == ".." || strings.HasPrefix(back, ".."+string(filepath.Separator)) {
 		return "", ErrPath
 	}
+	if err := staysInside(absRoot, full); err != nil {
+		return "", err
+	}
 	return full, nil
+}
+
+// staysInside rejects a symlink whose target leaves root. The lexical path
+// can stay inside the root while ReadFile and WriteFile follow the link out.
+func staysInside(absRoot, full string) error {
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return err
+	}
+	suffix := ""
+	current := full
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return err
+			}
+			candidate := resolved
+			if suffix != "" {
+				candidate = filepath.Join(resolved, suffix)
+			}
+			rel, err := filepath.Rel(resolvedRoot, candidate)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return ErrPath
+			}
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if current == resolvedRoot || current == absRoot || current == filepath.Dir(current) {
+			return ErrPath
+		}
+		base := filepath.Base(current)
+		if suffix == "" {
+			suffix = base
+		} else {
+			suffix = filepath.Join(base, suffix)
+		}
+		current = filepath.Dir(current)
+	}
 }
 
 // Bytes returns the file contents.

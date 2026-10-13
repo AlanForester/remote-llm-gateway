@@ -107,6 +107,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeAuth(w, err)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var req sessionRequest
 	if err := httpx.ReadJSON(r, &req); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_json"})
@@ -138,13 +139,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	metrics.Sessions.Set(float64(n))
 	view := store.Public(user, req.Model, s.opt.Now())
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"sessionId":    sess.id,
-		"model":        view.Model,
-		"forced":       view.Forced,
-		"tokenLimit":   view.TokenLimit,
-		"tokensUsed":   view.TokensUsed,
-		"resetAt":      view.ResetAt,
-		"workspaceDir": dir,
+		"sessionId":  sess.id,
+		"model":      view.Model,
+		"forced":     view.Forced,
+		"tokenLimit": view.TokenLimit,
+		"tokensUsed": view.TokensUsed,
+		"resetAt":    view.ResetAt,
 	})
 }
 
@@ -237,6 +237,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(1 << 20)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

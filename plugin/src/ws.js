@@ -88,23 +88,37 @@ function decodeServerFrames(buffer) {
   return { messages, rest: Buffer.from(buffer.subarray(offset)) };
 }
 
-function connect(url) {
+function gatewaySocketURL(gateway, sessionId) {
+  const base = String(gateway || "")
+    .replace(/\/$/, "")
+    .replace(/^https:/, "wss:")
+    .replace(/^http:/, "ws:");
+  return base + "/ws/" + encodeURIComponent(sessionId);
+}
+
+function connect(url, extraHeaders) {
   const target = new URL(url);
   const secure = target.protocol === "wss:" || target.protocol === "https:";
   const lib = secure ? https : http;
   const key = crypto.randomBytes(16).toString("base64");
+  const headers = {
+    Connection: "Upgrade",
+    Upgrade: "websocket",
+    "Sec-WebSocket-Version": "13",
+    "Sec-WebSocket-Key": key,
+  };
+  if (extraHeaders) {
+    for (const [name, value] of Object.entries(extraHeaders)) {
+      headers[name] = value;
+    }
+  }
   return new Promise((resolve, reject) => {
     const req = lib.request({
       protocol: secure ? "https:" : "http:",
       hostname: target.hostname,
       port: target.port || (secure ? 443 : 80),
       path: target.pathname + target.search,
-      headers: {
-        Connection: "Upgrade",
-        Upgrade: "websocket",
-        "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Key": key,
-      },
+      headers,
     });
     req.on("upgrade", (res, socket) => {
       if (res.headers["sec-websocket-accept"] !== acceptKey(key)) {
@@ -213,4 +227,4 @@ function wrap(socket) {
   };
 }
 
-module.exports = { acceptKey, encodeClientFrame, decodeServerFrames, connect };
+module.exports = { acceptKey, encodeClientFrame, decodeServerFrames, connect, gatewaySocketURL };

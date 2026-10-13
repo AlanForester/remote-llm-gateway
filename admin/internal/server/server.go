@@ -2,12 +2,15 @@
 package server
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"html/template"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlanForester/remote-llm-gateway/internal/metrics"
@@ -15,7 +18,11 @@ import (
 	"github.com/AlanForester/remote-llm-gateway/internal/store"
 )
 
-const cookieName = "admin_session"
+const (
+	cookieName  = "admin_session"
+	freshCookie = "admin_fresh"
+	csrfCookie  = "admin_csrf"
+)
 
 // Options configures the admin server.
 type Options struct {
@@ -63,26 +70,29 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	if err := s.parseForm(w, r); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(r.FormValue("token")), []byte(s.opt.AdminToken)) != 1 || s.opt.AdminToken == "" {
+	if !sameSecret(r.FormValue("token"), s.opt.AdminToken) {
 		s.render(w, view{Login: true, Error: "Неверный токен администратора"})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    tokenCookie(s.opt.AdminToken),
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	s.setCookie(w, r, cookieName, tokenCookie(s.opt.AdminToken), 0)
+	s.ensureCSRF(w, r)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
+	if err := s.parseForm(w, r); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.auth(r) || !s.csrfOK(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	s.setCookie(w, r, cookieName, "", -1)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -91,43 +101,34 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	s.render(w, s.pageView(r.URL.Query().Get("token"), ""))
+	s.render(w, s.pageView(s.takeFresh(w, r), "", s.ensureCSRF(w, r)))
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
-	if !s.auth(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", http.StatusBadRequest)
+	if !s.require(w, r) {
 		return
 	}
 	limit, err := strconv.ParseInt(defaultString(r.FormValue("tokenLimit"), "0"), 10, 64)
 	if err != nil {
-		s.render(w, s.pageView("", "Лимит токенов должен быть числом"))
+		s.fail(w, r, "Лимит токенов должен быть числом")
 		return
 	}
 	_, token, err := s.opt.Store.CreateUser(r.FormValue("name"), r.FormValue("forcedModel"), r.FormValue("resetEvery"), limit, s.opt.Now())
 	if err != nil {
-		s.render(w, s.pageView("", err.Error()))
+		s.fail(w, r, userErr(err))
 		return
 	}
-	http.Redirect(w, r, "/?token="+token, http.StatusSeeOther)
+	s.setCookie(w, r, freshCookie, token, 120)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
-	if !s.auth(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", http.StatusBadRequest)
+	if !s.require(w, r) {
 		return
 	}
 	limit, err := strconv.ParseInt(defaultString(r.FormValue("tokenLimit"), "0"), 10, 64)
 	if err != nil {
-		s.render(w, s.pageView("", "Лимит токенов должен быть числом"))
+		s.fail(w, r, "Лимит токенов должен быть числом")
 		return
 	}
 	name := r.FormValue("name")
@@ -140,36 +141,57 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		ResetEvery:  &every,
 	}, s.opt.Now())
 	if err != nil {
-		s.render(w, s.pageView("", err.Error()))
+		s.fail(w, r, userErr(err))
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
-	if !s.auth(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !s.require(w, r) {
 		return
 	}
-	_ = r.ParseForm()
 	if err := s.opt.Store.DeleteUser(r.FormValue("id")); err != nil {
-		s.render(w, s.pageView("", err.Error()))
+		s.fail(w, r, userErr(err))
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) setProxy(w http.ResponseWriter, r *http.Request) {
-	if !s.auth(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !s.require(w, r) {
 		return
 	}
-	_ = r.ParseForm()
-	if err := s.opt.Store.SetProxy(r.FormValue("proxy"), s.opt.Now()); err != nil {
-		s.render(w, s.pageView("", err.Error()))
+	raw := strings.TrimSpace(r.FormValue("proxy"))
+	if !proxy.Valid(raw) {
+		s.fail(w, r, "Адрес прокси должен быть http, https или socks5")
+		return
+	}
+	if err := s.opt.Store.SetProxy(raw, s.opt.Now()); err != nil {
+		s.fail(w, r, userErr(err))
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) require(w http.ResponseWriter, r *http.Request) bool {
+	if err := s.parseForm(w, r); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return false
+	}
+	if !s.auth(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if !s.csrfOK(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (s *Server) fail(w http.ResponseWriter, r *http.Request, text string) {
+	s.render(w, s.pageView("", text, s.csrfValue(r)))
 }
 
 func (s *Server) auth(r *http.Request) bool {
@@ -181,7 +203,7 @@ func (s *Server) auth(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(want)) == 1
 }
 
-func (s *Server) pageView(freshToken, errText string) view {
+func (s *Server) pageView(freshToken, errText, csrf string) view {
 	now := s.opt.Now()
 	users, _ := s.opt.Store.List(now)
 	rows := make([]userRow, 0, len(users))
@@ -198,14 +220,102 @@ func (s *Server) pageView(freshToken, errText string) view {
 		Effective:  proxy.Resolve(adminURL, adminAt, s.opt.EnvFile),
 		FreshToken: freshToken,
 		Error:      errText,
+		CSRF:       csrf,
 	}
 }
 
 func (s *Server) render(w http.ResponseWriter, v view) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	if err := s.tpl.Execute(w, v); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "template", http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) parseForm(w http.ResponseWriter, r *http.Request) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	return r.ParseForm()
+}
+
+func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAge int) {
+	c := &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   secureRequest(r),
+	}
+	if maxAge != 0 {
+		c.MaxAge = maxAge
+	}
+	http.SetCookie(w, c)
+}
+
+func (s *Server) ensureCSRF(w http.ResponseWriter, r *http.Request) string {
+	if value := s.csrfValue(r); value != "" {
+		return value
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return ""
+	}
+	value := hex.EncodeToString(buf)
+	s.setCookie(w, r, csrfCookie, value, 0)
+	return value
+}
+
+func (s *Server) csrfValue(r *http.Request) string {
+	c, err := r.Cookie(csrfCookie)
+	if err != nil || len(c.Value) != 64 {
+		return ""
+	}
+	return c.Value
+}
+
+func (s *Server) csrfOK(r *http.Request) bool {
+	want := s.csrfValue(r)
+	got := r.FormValue("csrf")
+	if want == "" || len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+func (s *Server) takeFresh(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(freshCookie)
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	s.setCookie(w, r, freshCookie, "", -1)
+	return c.Value
+}
+
+func secureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func sameSecret(got, want string) bool {
+	if got == "" || want == "" {
+		return false
+	}
+	sumGot := sha256.Sum256([]byte(got))
+	sumWant := sha256.Sum256([]byte(want))
+	return subtle.ConstantTimeCompare(sumGot[:], sumWant[:]) == 1
+}
+
+func userErr(err error) string {
+	if errors.Is(err, store.ErrBadInput) {
+		return "Проверьте имя, модель, лимит и период"
+	}
+	return err.Error()
 }
 
 func tokenCookie(token string) string {
@@ -228,6 +338,7 @@ type view struct {
 	Proxy      string
 	Effective  string
 	FreshToken string
+	CSRF       string
 }
 
 type userRow struct {
@@ -260,13 +371,14 @@ form.inline { display: inline; }
 </form>
 {{else}}
 <h1>Админка</h1>
-<form method="post" action="/logout"><button>Выйти</button></form>
+<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти</button></form>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 {{if .FreshToken}}<p class="token">Токен доступа, показывается один раз: <code>{{.FreshToken}}</code></p>{{end}}
 
 <h2>Исходящий прокси</h2>
 <p>Сейчас действует: <code>{{if .Effective}}{{.Effective}}{{else}}не задан{{end}}</code></p>
 <form method="post" action="/proxy">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
 <label>Адрес в админке <input name="proxy" value="{{.Proxy}}" placeholder="http://proxy:3128"></label>
 <button>Сохранить</button>
 </form>
@@ -274,6 +386,7 @@ form.inline { display: inline; }
 
 <h2>Новый пользователь</h2>
 <form method="post" action="/users">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
 <label>Имя <input name="name" required></label>
 <label>Принудительная LLM <input name="forcedModel" placeholder="claude-sonnet"></label>
 <label>Лимит токенов <input name="tokenLimit" value="0"></label>
@@ -288,6 +401,7 @@ form.inline { display: inline; }
 <tr>
 <td colspan="6">
 <form method="post" action="/users/update">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
 <input type="hidden" name="id" value="{{.ID}}">
 <input name="name" value="{{.Name}}">
 <input name="forcedModel" value="{{.ForcedModel}}" placeholder="модель">
@@ -297,6 +411,7 @@ form.inline { display: inline; }
 <button>Сохранить</button>
 </form>
 <form class="inline" method="post" action="/users/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
 <input type="hidden" name="id" value="{{.ID}}">
 <button>Удалить</button>
 </form>

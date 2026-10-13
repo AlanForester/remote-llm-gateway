@@ -41,6 +41,42 @@ func TestSafePathRejectsEscape(t *testing.T) {
 	}
 }
 
+func TestSafePathRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("hidden"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "leak")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "dirlink")); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"leak", "dirlink/secret.txt"} {
+		if _, err := SafePath(root, rel); err != ErrPath {
+			t.Fatalf("%s: %v", rel, err)
+		}
+	}
+	if err := Apply(root, []File{{Path: "dirlink/secret.txt", Content: "overwrite"}}); err != ErrPath {
+		t.Fatalf("apply %v", err)
+	}
+	body, err := os.ReadFile(secret)
+	if err != nil || string(body) != "hidden" {
+		t.Fatalf("outside file changed: %q %v", body, err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sub", filepath.Join(root, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafePath(root, "inside/note.txt"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDiffAfterEdit(t *testing.T) {
 	root := t.TempDir()
 	if err := Replace(root, []File{{Path: "a.txt", Content: "one"}}); err != nil {

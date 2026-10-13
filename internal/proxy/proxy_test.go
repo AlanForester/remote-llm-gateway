@@ -26,6 +26,20 @@ func TestPickLastWriteWins(t *testing.T) {
 	}
 }
 
+func TestValidProxy(t *testing.T) {
+	if !Valid("") || !Valid("http://proxy:3128") || !Valid("socks5://127.0.0.1:1080") {
+		t.Fatal("expected usable proxy")
+	}
+	for _, raw := range []string{"http://ok\nEVIL=1", "file:///etc/passwd", "javascript:alert(1)", "/bin/sh"} {
+		if Valid(raw) {
+			t.Fatalf("accepted %q", raw)
+		}
+	}
+	if got := Pick("http://ok\nEVIL=1", time.Time{}, "", time.Time{}, "http://fallback:3128"); got != "http://fallback:3128" {
+		t.Fatalf("invalid admin proxy used: %s", got)
+	}
+}
+
 func TestFileValue(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")

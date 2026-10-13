@@ -34,12 +34,23 @@ func TestAdminCreatesUserAndProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	body := readAll(t, res)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("login status %d", res.StatusCode)
 	}
+	csrf := csrfFrom(t, body)
+
+	denied, err := client.PostForm(ts.URL+"/users", url.Values{"name": {"ann"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing csrf %d", denied.StatusCode)
+	}
 
 	res, err = client.PostForm(ts.URL+"/users", url.Values{
+		"csrf":        {csrf},
 		"name":        {"ann"},
 		"forcedModel": {"claude-sonnet"},
 		"tokenLimit":  {"100"},
@@ -48,11 +59,31 @@ func TestAdminCreatesUserAndProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := readAll(t, res)
+	body = readAll(t, res)
 	if !strings.Contains(body, "Токен доступа") {
 		t.Fatalf("body %s", body)
 	}
-	res, err = client.PostForm(ts.URL+"/proxy", url.Values{"proxy": {"http://proxy:3128"}})
+	if res.Request.URL.RawQuery != "" {
+		t.Fatalf("token leaked into the url: %s", res.Request.URL)
+	}
+	again, err := client.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readAll(t, again), "Токен доступа") {
+		t.Fatal("access token shown twice")
+	}
+	badProxy, err := client.PostForm(ts.URL+"/proxy", url.Values{"csrf": {csrf}, "proxy": {"http://ok\nEVIL=1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readAll(t, badProxy), "socks5") {
+		t.Fatal("invalid proxy was accepted")
+	}
+	if got, _, err := st.ProxySettings(); err != nil || got != "" {
+		t.Fatalf("proxy stored early: %q %v", got, err)
+	}
+	res, err = client.PostForm(ts.URL+"/proxy", url.Values{"csrf": {csrf}, "proxy": {"http://proxy:3128"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +96,21 @@ func TestAdminCreatesUserAndProxy(t *testing.T) {
 	if err != nil || got != "http://proxy:3128" {
 		t.Fatalf("proxy %q %v", got, err)
 	}
+}
+
+func csrfFrom(t *testing.T, body string) string {
+	t.Helper()
+	const needle = `name="csrf" value="`
+	i := strings.Index(body, needle)
+	if i < 0 {
+		t.Fatalf("csrf field missing: %s", body)
+	}
+	rest := body[i+len(needle):]
+	j := strings.Index(rest, `"`)
+	if j <= 0 {
+		t.Fatal("csrf value missing")
+	}
+	return rest[:j]
 }
 
 func readAll(t *testing.T, res *http.Response) string {

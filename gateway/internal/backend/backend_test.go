@@ -179,11 +179,12 @@ func TestReadRejectsEscapeAndHidesSecrets(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 	t.Setenv("OPENAI_API_KEY", "sk-hidden")
-	out, err := toolRun(context.Background(), dir, []byte(`{"command":"printenv OPENAI_API_KEY || true"}`))
+	t.Setenv("REDIS_URL", "redis://:hidden@redis:6379/0")
+	out, err := toolRun(context.Background(), dir, []byte(`{"command":"printenv || true"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "sk-hidden") {
+	if strings.Contains(out, "sk-hidden") || strings.Contains(out, "hidden@redis") {
 		t.Fatalf("%s", out)
 	}
 }

@@ -14,6 +14,9 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/AlanForester/remote-llm-gateway/internal/procenv"
+	"github.com/AlanForester/remote-llm-gateway/internal/proxy"
 )
 
 // Agent is one running model session.
@@ -140,7 +143,7 @@ func startProcess(ctx context.Context, command []string, dir, proxyURL string) (
 	}
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = dir
-	cmd.Env = proxyEnv(os.Environ(), proxyURL)
+	cmd.Env = proxyEnv(procenv.WithoutGatewaySecrets(os.Environ()), proxyURL)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -199,7 +202,8 @@ func startProcess(ctx context.Context, command []string, dir, proxyURL string) (
 }
 
 func proxyEnv(base []string, proxyURL string) []string {
-	if strings.TrimSpace(proxyURL) == "" {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" || !proxy.Valid(proxyURL) {
 		return base
 	}
 	drop := map[string]bool{

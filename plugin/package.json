@@ -20,6 +20,10 @@
       {
         "command": "remoteLlm.showModel",
         "title": "Remote LLM: показать назначенную модель"
+      },
+      {
+        "command": "remoteLlm.setToken",
+        "title": "Remote LLM: задать токен"
       }
     ],
     "views": {
@@ -43,11 +47,6 @@
           "type": "string",
           "default": "http://127.0.0.1:8080",
           "description": "Адрес шлюза, http или ws."
-        },
-        "remoteLlm.gatewayToken": {
-          "type": "string",
-          "default": "",
-          "description": "Токен пользователя из админки."
         }
       }
     }

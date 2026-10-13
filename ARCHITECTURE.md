@@ -43,7 +43,7 @@
 3. **Session Management**
    - При открытии чата в плагине создаётся уникальная сессия (`sessionId = userId + projectHash`).
    - Шлюз запускает `grok agent serve --secret=...` или использует persistent headless connection.
-   - Плагин подключается: `wss://gateway/.../ws/{sessionId}?token=...&workspace=/path/to/local/project`.
+   - Плагин подключается: `wss://gateway/.../ws/{sessionId}` с заголовком `Authorization: Bearer`. Токен в адресе не передаётся.
    - Шлюз маппит workspace path на серверную директорию (например, `/workspaces/user123-projectabc`).
 
 4. **Поддержка нескольких агентов**

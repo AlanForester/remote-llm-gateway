@@ -22,11 +22,13 @@ func ReadJSON(r *http.Request, v any) error {
 	return dec.Decode(v)
 }
 
-// Bearer reads an Authorization header or a token query parameter.
+// Bearer reads an Authorization header. The token is not taken from the query
+// string, so it does not land in access logs or Referer.
 func Bearer(r *http.Request) string {
 	h := r.Header.Get("Authorization")
-	if strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		return strings.TrimSpace(h[len("bearer "):])
+	const prefix = "bearer "
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return ""
 	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
+	return strings.TrimSpace(h[len(prefix):])
 }

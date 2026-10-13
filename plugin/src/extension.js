@@ -4,13 +4,61 @@ const vscode = require("vscode");
 const sync = require("./sync");
 const ws = require("./ws");
 
+const tokenKey = "remoteLlm.gatewayToken";
+let secrets;
+
 function activate(context) {
+  secrets = context.secrets;
   context.subscriptions.push(
-    vscode.commands.registerCommand("remoteLlm.showModel", () => showModel())
+    vscode.commands.registerCommand("remoteLlm.showModel", () => showModel()),
+    vscode.commands.registerCommand("remoteLlm.setToken", () => setToken())
   );
+  migrateLegacyToken().catch(() => {});
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("remoteLlm.chat", new ChatView())
   );
+}
+
+async function setToken() {
+  const value = await vscode.window.showInputBox({
+    title: "Токен Remote LLM",
+    prompt: "Токен пользователя из админки",
+    password: true,
+    ignoreFocusOut: true,
+  });
+  if (!value || !value.trim()) {
+    return;
+  }
+  await secrets.store(tokenKey, value.trim());
+  vscode.window.showInformationMessage("Токен сохранён в Secret Storage.");
+}
+
+async function migrateLegacyToken() {
+  const existing = await secrets.get(tokenKey);
+  if (existing) {
+    return;
+  }
+  const cfg = vscode.workspace.getConfiguration("remoteLlm");
+  const legacy = cfg.get("gatewayToken");
+  if (!legacy) {
+    return;
+  }
+  await secrets.store(tokenKey, String(legacy));
+  const inspected = cfg.inspect("gatewayToken");
+  if (inspected && inspected.workspaceValue !== undefined) {
+    await cfg.update("gatewayToken", undefined, vscode.ConfigurationTarget.Workspace);
+  }
+  if (inspected && inspected.globalValue !== undefined) {
+    await cfg.update("gatewayToken", undefined, vscode.ConfigurationTarget.Global);
+  }
+}
+
+async function gatewayToken() {
+  const stored = await secrets.get(tokenKey);
+  if (!stored) {
+    throw new Error("Задайте токен командой «Remote LLM: задать токен».");
+  }
+  return stored;
 }
 
 async function showModel() {
@@ -83,9 +131,9 @@ class ChatView {
         this.post("status", "пропущен " + name);
       }
       if (!this.socket) {
-        this.socket = await ws.connect(
-          socketURL(cfg.get("gatewayUrl"), this.sessionId, cfg.get("gatewayToken"))
-        );
+        this.socket = await ws.connect(ws.gatewaySocketURL(cfg.get("gatewayUrl"), this.sessionId), {
+          Authorization: "Bearer " + (await gatewayToken()),
+        });
       }
       this.post("you", trimmed);
       const id = this.nextId++;
@@ -215,16 +263,12 @@ async function readResult(socket, id) {
   }
 }
 
-function gatewayConfig(cfg) {
-  const token = cfg.get("gatewayToken");
-  if (!token) {
-    throw new Error("Укажите remoteLlm.gatewayToken.");
-  }
-  return { base: httpBase(cfg.get("gatewayUrl")), token };
+async function gatewayConfig(cfg) {
+  return { base: httpBase(cfg.get("gatewayUrl")), token: await gatewayToken() };
 }
 
 async function getJSON(cfg, route) {
-  const { base, token } = gatewayConfig(cfg);
+  const { base, token } = await gatewayConfig(cfg);
   const res = await fetch(base + route, {
     headers: { Authorization: "Bearer " + token },
   });
@@ -232,7 +276,7 @@ async function getJSON(cfg, route) {
 }
 
 async function postJSON(cfg, route, payload) {
-  const { base, token } = gatewayConfig(cfg);
+  const { base, token } = await gatewayConfig(cfg);
   const res = await fetch(base + route, {
     method: "POST",
     headers: {
@@ -245,7 +289,7 @@ async function postJSON(cfg, route, payload) {
 }
 
 async function putJSON(cfg, route, payload) {
-  const { base, token } = gatewayConfig(cfg);
+  const { base, token } = await gatewayConfig(cfg);
   const res = await fetch(base + route, {
     method: "PUT",
     headers: {
@@ -268,11 +312,6 @@ async function readBody(res) {
 function httpBase(url) {
   const raw = String(url || "").replace(/\/$/, "");
   return raw.replace(/^ws:/, "http:").replace(/^wss:/, "https:");
-}
-
-function socketURL(gateway, sessionId, token) {
-  const base = httpBase(gateway).replace(/^https:/, "wss:").replace(/^http:/, "ws:");
-  return base + "/ws/" + sessionId + "?token=" + encodeURIComponent(token);
 }
 
 function chatHtml() {
@@ -312,7 +351,8 @@ function chatHtml() {
   window.addEventListener("message", (event) => {
     const msg = event.data || {};
     const line = document.createElement("div");
-    line.className = msg.type || "status";
+    const kinds = ["you", "agent", "error", "file", "status"];
+    line.className = kinds.indexOf(msg.type) >= 0 ? msg.type : "status";
     const prefix = { you: "Вы: ", agent: "Агент: ", error: "", file: "", status: "" };
     line.textContent = (prefix[msg.type] || "") + (msg.text || "");
     log.appendChild(line);
@@ -324,4 +364,4 @@ function chatHtml() {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate, httpBase, socketURL };
+module.exports = { activate, deactivate, httpBase };

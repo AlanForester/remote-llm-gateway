@@ -55,7 +55,9 @@ func main() {
 		}
 	}
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL(*gateway, created.SessionID, *token), nil)
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+*token)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(*gateway, created.SessionID), header)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -149,11 +151,11 @@ func openSession(gateway, token, workspace, model string) (sessionResponse, erro
 	return out, nil
 }
 
-func wsURL(gateway, sessionID, token string) string {
+func wsURL(gateway, sessionID string) string {
 	base := strings.TrimRight(gateway, "/")
 	base = strings.Replace(base, "https://", "wss://", 1)
 	base = strings.Replace(base, "http://", "ws://", 1)
-	return base + "/ws/" + sessionID + "?token=" + token
+	return base + "/ws/" + sessionID
 }
 
 func readResult(conn *websocket.Conn, id int) ([]byte, error) {

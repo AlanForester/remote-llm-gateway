@@ -15,6 +15,7 @@ import (
 
 	"github.com/AlanForester/remote-llm-gateway/gateway/internal/mcp"
 	"github.com/AlanForester/remote-llm-gateway/internal/filesync"
+	"github.com/AlanForester/remote-llm-gateway/internal/procenv"
 )
 
 func openAITools(hub *mcp.Hub) []map[string]any {
@@ -189,11 +190,15 @@ func toolRun(ctx context.Context, dir string, args json.RawMessage) (string, err
 	if strings.TrimSpace(in.Command) == "" {
 		return "", errors.New("пустая команда")
 	}
+	if len(in.Command) > 4000 {
+		return "", errors.New("слишком длинная команда")
+	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "sh", "-c", in.Command)
 	cmd.Dir = dir
-	cmd.Env = scrubEnv(os.Environ())
+	cmd.Env = procenv.ForTool()
+	hardenCommand(cmd)
 	var buf bytes.Buffer
 	cmd.Stdout = &limitWriter{N: 32 << 10, W: &buf}
 	cmd.Stderr = cmd.Stdout
@@ -214,32 +219,6 @@ func sessionPath(dir, rel string) (string, error) {
 		return filepath.Abs(dir)
 	}
 	return filesync.SafePath(dir, rel)
-}
-
-func scrubEnv(base []string) []string {
-	out := make([]string, 0, len(base))
-	for _, entry := range base {
-		key, _, _ := strings.Cut(entry, "=")
-		if secretEnv(key) {
-			continue
-		}
-		out = append(out, entry)
-	}
-	return out
-}
-
-func secretEnv(key string) bool {
-	upper := strings.ToUpper(key)
-	switch upper {
-	case "OPENAI_API_KEY", "ADMIN_TOKEN", "GATEWAY_TOKEN":
-		return true
-	}
-	for _, part := range []string{"TOKEN", "SECRET", "PASSWORD", "API_KEY"} {
-		if strings.Contains(upper, part) {
-			return true
-		}
-	}
-	return false
 }
 
 type limitWriter struct {

@@ -8,9 +8,10 @@
 #   --build-arg PORT=8080 --build-arg INSTALL_GIT=1 -t gateway .
 #
 # Каталог /data общий: все три процесса открывают один DATA_FILE.
-# git нужен шлюзу для worktree сессии. grok и claude в образ не входят.
+# git в образе нужен агентам в каталоге сессии. grok и claude в образ не входят.
+# Go 1.26.9 закрывает дыры net/http из 1.22.12 и 1.26.0.
 
-FROM golang:1.22.12-bookworm AS build
+FROM golang:1.26.9-bookworm AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./

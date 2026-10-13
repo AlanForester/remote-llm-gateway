@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/AlanForester/remote-llm-gateway/internal/procenv"
 )
 
 // Server is one stdio MCP process from the config file.
@@ -153,6 +155,7 @@ type process struct {
 
 func startProcess(ctx context.Context, srv Server) (*process, error) {
 	cmd := exec.CommandContext(ctx, srv.Command[0], srv.Command[1:]...)
+	cmd.Env = procenv.WithoutGatewaySecrets(os.Environ())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

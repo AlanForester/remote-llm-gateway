@@ -25,7 +25,7 @@ func TestPreparePlainDir(t *testing.T) {
 	}
 }
 
-func TestPrepareGitWorktree(t *testing.T) {
+func TestPrepareDoesNotAttachServerRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
@@ -49,7 +49,7 @@ func TestPrepareGitWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dest, "readme.txt")); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(dest, "readme.txt")); !os.IsNotExist(err) {
+		t.Fatalf("server repo was copied into the session: %v", err)
 	}
 }
