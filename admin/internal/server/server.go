@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"html/template"
@@ -17,6 +18,9 @@ import (
 	"github.com/AlanForester/remote-llm-gateway/internal/proxy"
 	"github.com/AlanForester/remote-llm-gateway/internal/store"
 )
+
+//go:embed page.html
+var pageHTML string
 
 const (
 	cookieName  = "admin_session"
@@ -45,7 +49,7 @@ func New(opt Options) *Server {
 		opt.Now = time.Now
 	}
 	s := &Server{opt: opt, mux: http.NewServeMux()}
-	s.tpl = template.Must(template.New("admin").Parse(page))
+	s.tpl = template.Must(template.New("admin").Parse(pageHTML))
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -206,22 +210,99 @@ func (s *Server) auth(r *http.Request) bool {
 func (s *Server) pageView(freshToken, errText, csrf string) view {
 	now := s.opt.Now()
 	users, _ := s.opt.Store.List(now)
+	names := map[string]string{}
 	rows := make([]userRow, 0, len(users))
+	var tokensPeriod int64
+	var overLimit int
 	for _, u := range users {
 		p := store.Public(u, "", now)
-		rows = append(rows, userRow{User: u, ResetAt: p.ResetAt.Format(time.RFC3339)})
+		names[u.ID] = u.Name
+		tokensPeriod += p.TokensUsed
+		if p.TokenLimit > 0 && p.TokensUsed >= p.TokenLimit {
+			overLimit++
+		}
+		shown := u
+		shown.TokensUsed = p.TokensUsed
+		rows = append(rows, userRow{
+			User:          shown,
+			ResetAt:       p.ResetAt.UTC().Format("02.01.2006 15:04 UTC"),
+			ModelOptions:  modelOptions(u.ForcedModel),
+			PeriodOptions: periodOptions(u.ResetEvery),
+		})
 	}
 	adminURL, adminAt, _ := s.opt.Store.ProxySettings()
-	usage, _ := s.opt.Store.Usage(20)
+	usage, _ := s.opt.Store.Usage(1000)
 	return view{
-		Users:      rows,
-		Usage:      usage,
-		Proxy:      adminURL,
-		Effective:  proxy.Resolve(adminURL, adminAt, s.opt.EnvFile),
-		FreshToken: freshToken,
-		Error:      errText,
-		CSRF:       csrf,
+		Users:         rows,
+		UsageRows:     usageRows(usage, names),
+		ModelBars:     modelBars(usage),
+		Stats:         dashStats{Users: len(users), TokensPeriod: tokensPeriod, Events: len(usage), OverLimit: overLimit},
+		Providers:     probeProviders(),
+		ModelOptions:  modelOptions(""),
+		PeriodOptions: periodOptions("day"),
+		Proxy:         adminURL,
+		Effective:     proxy.Resolve(adminURL, adminAt, s.opt.EnvFile),
+		FreshToken:    freshToken,
+		Error:         errText,
+		CSRF:          csrf,
 	}
+}
+
+func usageRows(events []store.UsageEvent, names map[string]string) []usageRow {
+	rows := make([]usageRow, 0, len(events))
+	for i := len(events) - 1; i >= 0 && len(rows) < 15; i-- {
+		ev := events[i]
+		name := names[ev.UserID]
+		if name == "" {
+			name = ev.UserID
+		}
+		model := ev.Model
+		if model == "" {
+			model = "grok"
+		}
+		rows = append(rows, usageRow{
+			When:   ev.At.UTC().Format("02.01.2006 15:04"),
+			User:   name,
+			Model:  model,
+			Tokens: ev.Tokens,
+		})
+	}
+	return rows
+}
+
+func modelBars(events []store.UsageEvent) []modelBar {
+	order := []string{}
+	byName := map[string]*modelBar{}
+	var max int64
+	for _, ev := range events {
+		name := ev.Model
+		if name == "" {
+			name = "grok"
+		}
+		bar := byName[name]
+		if bar == nil {
+			bar = &modelBar{Name: name}
+			byName[name] = bar
+			order = append(order, name)
+		}
+		bar.Tokens += ev.Tokens
+		bar.Calls++
+		if bar.Tokens > max {
+			max = bar.Tokens
+		}
+	}
+	out := make([]modelBar, 0, len(order))
+	for _, name := range order {
+		bar := *byName[name]
+		if max > 0 {
+			bar.Width = int(bar.Tokens * 100 / max)
+			if bar.Width < 2 && bar.Tokens > 0 {
+				bar.Width = 2
+			}
+		}
+		out = append(out, bar)
+	}
+	return out
 }
 
 func (s *Server) render(w http.ResponseWriter, v view) {
@@ -331,103 +412,45 @@ func defaultString(s, fallback string) string {
 }
 
 type view struct {
-	Login      bool
-	Error      string
-	Users      []userRow
-	Usage      []store.UsageEvent
-	Proxy      string
-	Effective  string
-	FreshToken string
-	CSRF       string
+	Login         bool
+	Error         string
+	Users         []userRow
+	UsageRows     []usageRow
+	ModelBars     []modelBar
+	Stats         dashStats
+	Providers     []providerCard
+	ModelOptions  []option
+	PeriodOptions []option
+	Proxy         string
+	Effective     string
+	FreshToken    string
+	CSRF          string
+}
+
+type dashStats struct {
+	Users        int
+	TokensPeriod int64
+	Events       int
+	OverLimit    int
+}
+
+type usageRow struct {
+	When   string
+	User   string
+	Model  string
+	Tokens int64
+}
+
+type modelBar struct {
+	Name   string
+	Tokens int64
+	Calls  int
+	Width  int
 }
 
 type userRow struct {
 	store.User
-	ResetAt string
+	ResetAt       string
+	ModelOptions  []option
+	PeriodOptions []option
 }
-
-const page = `<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<title>Remote LLM Gateway</title>
-<style>
-body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 2rem; color: #1a1a1a; }
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-td, th { border-bottom: 1px solid #ddd; padding: 0.4rem; text-align: left; vertical-align: top; }
-input, button { font: inherit; padding: 0.3rem 0.5rem; }
-.err { color: #8a1f1f; }
-.token { background: #f4f1e8; padding: 0.6rem; }
-form.inline { display: inline; }
-</style>
-</head>
-<body>
-{{if .Login}}
-<h1>Вход в админку</h1>
-{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-<form method="post" action="/login">
-<label>Токен администратора <input name="token" type="password" required></label>
-<button>Войти</button>
-</form>
-{{else}}
-<h1>Админка</h1>
-<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти</button></form>
-{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-{{if .FreshToken}}<p class="token">Токен доступа, показывается один раз: <code>{{.FreshToken}}</code></p>{{end}}
-
-<h2>Исходящий прокси</h2>
-<p>Сейчас действует: <code>{{if .Effective}}{{.Effective}}{{else}}не задан{{end}}</code></p>
-<form method="post" action="/proxy">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Адрес в админке <input name="proxy" value="{{.Proxy}}" placeholder="http://proxy:3128"></label>
-<button>Сохранить</button>
-</form>
-<p>Пустое поле оставляет прокси из <code>OUTBOUND_PROXY</code> в <code>.env</code>. Более позднее изменение побеждает.</p>
-
-<h2>Новый пользователь</h2>
-<form method="post" action="/users">
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Имя <input name="name" required></label>
-<label>Принудительная LLM <input name="forcedModel" placeholder="claude-sonnet"></label>
-<label>Лимит токенов <input name="tokenLimit" value="0"></label>
-<label>Период сброса <input name="resetEvery" value="day" placeholder="day, week, month или 12h"></label>
-<button>Создать</button>
-</form>
-
-<h2>Пользователи</h2>
-<table>
-<tr><th>Имя</th><th>Модель</th><th>Токены</th><th>Период</th><th>Сброс</th><th></th></tr>
-{{range .Users}}
-<tr>
-<td colspan="6">
-<form method="post" action="/users/update">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<input type="hidden" name="id" value="{{.ID}}">
-<input name="name" value="{{.Name}}">
-<input name="forcedModel" value="{{.ForcedModel}}" placeholder="модель">
-<input name="tokenLimit" value="{{.TokenLimit}}">
-<input name="resetEvery" value="{{.ResetEvery}}">
-<span>{{.TokensUsed}} использовано, сброс {{.ResetAt}}</span>
-<button>Сохранить</button>
-</form>
-<form class="inline" method="post" action="/users/delete">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<input type="hidden" name="id" value="{{.ID}}">
-<button>Удалить</button>
-</form>
-</td>
-</tr>
-{{end}}
-</table>
-
-<h2>Последний расход</h2>
-<table>
-<tr><th>Когда</th><th>Пользователь</th><th>Модель</th><th>Токены</th></tr>
-{{range .Usage}}
-<tr><td>{{.At.Format "2006-01-02 15:04"}}</td><td>{{.UserID}}</td><td>{{.Model}}</td><td>{{.Tokens}}</td></tr>
-{{end}}
-</table>
-{{end}}
-</body>
-</html>
-`

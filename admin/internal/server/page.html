@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote LLM Gateway</title>
+<style>
+:root {
+  --ink: #1c2128;
+  --muted: #5c6570;
+  --line: #e2e5ea;
+  --paper: #f3f4f6;
+  --card: #ffffff;
+  --accent: #1e3a5f;
+  --ok: #1f7a45;
+  --ok-bg: #e8f5ee;
+  --no: #8d342e;
+  --no-bg: #f8eceb;
+  --warn: #8a5a12;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+header {
+  background: var(--ink);
+  color: #fff;
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+header h1 { font-size: 1.05rem; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+header p { margin: 0.15rem 0 0; color: #c5ccd4; font-size: 0.82rem; }
+main { max-width: 1080px; margin: 0 auto; padding: 1.25rem 1.5rem 3rem; }
+h2 { font-size: 0.95rem; margin: 1.4rem 0 0.7rem; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+}
+.err {
+  background: var(--no-bg);
+  color: var(--no);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin: 0 0 1rem;
+}
+.token {
+  background: #f4f1e8;
+  border: 1px solid #e4dcc6;
+  border-radius: 6px;
+  padding: 0.7rem 0.8rem;
+  margin: 0 0 1rem;
+}
+.token code { font-size: 0.92rem; word-break: break-all; }
+.stats, .models { display: grid; gap: 0.75rem; }
+.stats { grid-template-columns: repeat(4, 1fr); }
+.models { grid-template-columns: repeat(3, 1fr); }
+.stat .label, .model .name, label span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.stat strong { display: block; margin-top: 0.25rem; font-size: 1.45rem; font-variant-numeric: tabular-nums; }
+.model { display: flex; flex-direction: column; gap: 0.35rem; }
+.badge {
+  align-self: flex-start;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+}
+.badge.ok { color: var(--ok); background: var(--ok-bg); }
+.badge.no { color: var(--no); background: var(--no-bg); }
+.detail { color: var(--muted); font-size: 0.85rem; }
+.bars { display: flex; flex-direction: column; gap: 0.55rem; margin-top: 0.8rem; }
+.bar-row { display: grid; grid-template-columns: 9rem 1fr auto; gap: 0.6rem; align-items: center; font-size: 0.88rem; }
+.track { height: 8px; background: #e7eaee; border-radius: 99px; overflow: hidden; }
+.track span { display: block; height: 100%; background: var(--accent); }
+.num { font-variant-numeric: tabular-nums; color: var(--muted); }
+form.stack, form.row { display: flex; flex-wrap: wrap; gap: 0.7rem 0.9rem; align-items: end; }
+label { display: flex; flex-direction: column; gap: 0.25rem; }
+input, select, button { font: inherit; }
+input, select {
+  border: 1px solid #c8cdd4;
+  background: #fff;
+  border-radius: 4px;
+  padding: 0.4rem 0.55rem;
+  min-width: 11rem;
+  color: var(--ink);
+}
+input[name="name"] { min-width: 8rem; }
+input[name="tokenLimit"] { min-width: 7rem; }
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+button.quiet, header button { background: transparent; color: inherit; border: 1px solid #8b949e; }
+button.danger { background: transparent; color: var(--no); border: 1px solid #e2c4c1; }
+.note { color: var(--muted); font-size: 0.85rem; margin: 0.6rem 0 0; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600; }
+.user-line { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+.meta { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.82rem; }
+.empty { color: var(--muted); margin: 0.2rem 0; }
+.login { max-width: 420px; }
+@media (max-width: 800px) {
+  .stats, .models { grid-template-columns: 1fr 1fr; }
+  .bar-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Remote LLM Gateway</h1>
+    <p>Админка</p>
+  </div>
+  {{if not .Login}}
+  <form method="post" action="/logout">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="quiet" type="submit">Выйти</button>
+  </form>
+  {{end}}
+</header>
+<main>
+{{if .Login}}
+<section class="card login">
+  <h2>Вход</h2>
+  {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+  <form class="stack" method="post" action="/login">
+    <label><span>Токен администратора</span><input name="token" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Войти</button>
+  </form>
+</section>
+{{else}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+{{if .FreshToken}}<p class="token">Токен доступа, показывается один раз: <code>{{.FreshToken}}</code></p>{{end}}
+
+<section class="stats">
+  <article class="card stat"><span class="label">Пользователи</span><strong>{{.Stats.Users}}</strong></article>
+  <article class="card stat"><span class="label">Токены за период</span><strong>{{.Stats.TokensPeriod}}</strong></article>
+  <article class="card stat"><span class="label">Записей расхода</span><strong>{{.Stats.Events}}</strong></article>
+  <article class="card stat"><span class="label">На лимите</span><strong>{{.Stats.OverLimit}}</strong></article>
+</section>
+
+<h2>Подключение моделей</h2>
+<section class="models">
+  {{range .Providers}}
+  <article class="card model">
+    <span class="name">{{.Name}}</span>
+    {{if .Ready}}<span class="badge ok">Подключена</span>{{else}}<span class="badge no">Не подключена</span>{{end}}
+    <span class="detail">{{.Detail}}</span>
+  </article>
+  {{end}}
+</section>
+
+<h2>Расход по моделям</h2>
+<section class="card">
+  {{if .ModelBars}}
+  <div class="bars">
+    {{range .ModelBars}}
+    <div class="bar-row">
+      <span>{{.Name}}</span>
+      <div class="track"><span style="width: {{.Width}}%"></span></div>
+      <span class="num">{{.Tokens}} · {{.Calls}}</span>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty">Расхода ещё нет.</p>
+  {{end}}
+</section>
+
+<h2>Исходящий прокси</h2>
+<section class="card">
+  <p class="note">Сейчас действует: <code>{{if .Effective}}{{.Effective}}{{else}}не задан{{end}}</code></p>
+  <form class="row" method="post" action="/proxy">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label><span>Адрес в админке</span><input name="proxy" value="{{.Proxy}}" placeholder="http://proxy:3128"></label>
+    <button type="submit">Сохранить</button>
+  </form>
+  <p class="note">Пустое поле оставляет прокси из <code>OUTBOUND_PROXY</code> в <code>.env</code>. Более позднее изменение побеждает.</p>
+</section>
+
+<h2>Новый пользователь</h2>
+<section class="card">
+  <form class="row" method="post" action="/users">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label><span>Имя</span><input name="name" required></label>
+    <label><span>Принудительная LLM</span>
+      <select name="forcedModel">
+        {{range .ModelOptions}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label><span>Лимит токенов</span><input name="tokenLimit" value="0" inputmode="numeric"></label>
+    <label><span>Период сброса</span>
+      <select name="resetEvery">
+        {{range .PeriodOptions}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <button type="submit">Создать</button>
+  </form>
+  <p class="note">Лимит 0 не ограничивает. Пустая модель оставляет Grok, пока клиент сам не выберет другую.</p>
+</section>
+
+<h2>Пользователи</h2>
+<section class="card">
+  {{if not .Users}}<p class="empty">Пользователей нет.</p>{{else}}
+  <table>
+    <tr><th>Учётная запись</th></tr>
+    {{range .Users}}
+    <tr>
+      <td>
+        <form class="user-line" method="post" action="/users/update">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <label><span>Имя</span><input name="name" value="{{.Name}}"></label>
+          <label><span>Модель</span>
+            <select name="forcedModel">
+              {{range .ModelOptions}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+            </select>
+          </label>
+          <label><span>Лимит</span><input name="tokenLimit" value="{{.TokenLimit}}" inputmode="numeric"></label>
+          <label><span>Период</span>
+            <select name="resetEvery">
+              {{range .PeriodOptions}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+            </select>
+          </label>
+          <button type="submit">Сохранить</button>
+        </form>
+        <p class="meta">{{.TokensUsed}} использовано{{if .TokenLimit}} из {{.TokenLimit}}{{end}} · сброс {{.ResetAt}}</p>
+        <form method="post" action="/users/delete">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <button class="danger" type="submit">Удалить</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+</section>
+
+<h2>Последний расход</h2>
+<section class="card">
+  {{if not .UsageRows}}<p class="empty">Записей нет.</p>{{else}}
+  <table>
+    <tr><th>Когда</th><th>Пользователь</th><th>Модель</th><th>Токены</th></tr>
+    {{range .UsageRows}}
+    <tr><td>{{.When}}</td><td>{{.User}}</td><td>{{.Model}}</td><td class="num">{{.Tokens}}</td></tr>
+    {{end}}
+  </table>
+  {{end}}
+</section>
+{{end}}
+</main>
+</body>
+</html>

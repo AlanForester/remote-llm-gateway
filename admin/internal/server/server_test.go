@@ -63,6 +63,15 @@ func TestAdminCreatesUserAndProxy(t *testing.T) {
 	if !strings.Contains(body, "Токен доступа") {
 		t.Fatalf("body %s", body)
 	}
+	if !strings.Contains(body, `<select name="forcedModel">`) || !strings.Contains(body, `<select name="resetEvery">`) {
+		t.Fatal("model and period selectors missing")
+	}
+	if !strings.Contains(body, `value="claude-sonnet" selected`) || !strings.Contains(body, `value="week" selected`) {
+		t.Fatal("saved model or period is not selected")
+	}
+	if !strings.Contains(body, "Подключение моделей") || !strings.Contains(body, ">Grok<") {
+		t.Fatal("provider status missing")
+	}
 	if res.Request.URL.RawQuery != "" {
 		t.Fatalf("token leaked into the url: %s", res.Request.URL)
 	}
