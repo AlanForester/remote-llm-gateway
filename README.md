@@ -117,7 +117,7 @@
 
 ## Установка
 
-Релиз [v0.1.0](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.0) содержит бинарники `remote-llm`, пакет `.vsix` и образы этой версии в GHCR. Плагин в Marketplace не опубликован. Локально сервисы запускаются из исходников.
+Релиз [v0.1.1](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.1) содержит бинарники `remote-llm`, пакет `.vsix` и образы этой версии в GHCR. Плагин в Marketplace не опубликован. Локально сервисы запускаются из исходников.
 
 ```bash
 cp .env.example .env
@@ -208,8 +208,8 @@ ghcr.io/alanforester/remote-llm-gateway/admin:<sha>
 Git-тег `vMAJOR.MINOR.PATCH` публикует те же образы с номером версии (`1.2.3` и `v1.2.3`) и тем же SHA. Этот тег собирает GitHub Release: бинарники `remote-llm` для Linux, macOS и Windows и пакет плагина `.vsix`. В описании релиза лежат имена образов этой версии.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Вход в реестр и создание релиза идут через `GITHUB_TOKEN`, который выдаёт сам GitHub Actions. В workflow у этих шагов права `packages: write` и `contents: write`. Отдельного токена в файлах репозитория нет. В Settings → Actions → General у репозитория должно быть разрешено чтение и запись для `GITHUB_TOKEN`, иначе публикация пакета остановится на правах.
@@ -237,8 +237,8 @@ docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 `IMAGE_TAG=local` собирает образы из [`deploy/Dockerfile`](deploy/Dockerfile). После публикации в GHCR тот же файл можно поднять без сборки:
 
 ```bash
-IMAGE_TAG=0.1.0 docker compose --env-file .env -f deploy/docker-compose.yml pull
-IMAGE_TAG=0.1.0 docker compose --env-file .env -f deploy/docker-compose.yml up -d
+IMAGE_TAG=0.1.1 docker compose --env-file .env -f deploy/docker-compose.yml pull
+IMAGE_TAG=0.1.1 docker compose --env-file .env -f deploy/docker-compose.yml up -d
 ```
 
 `GATEWAY_ECHO=1` в `.env` оставляет эхо. Для настоящих агентов поставьте `0`: `grok` и `claude` должны быть доступны процессу шлюза.
@@ -263,7 +263,7 @@ kubectl apply -k deploy
 
 ## Ограничения
 
-- Плагин в Marketplace не опубликован. Готовый `.vsix` лежит в релизе [v0.1.0](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.0).
+- Плагин в Marketplace не опубликован. Готовый `.vsix` лежит в релизе [v0.1.1](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.1).
 - Вход в аккаунт провайдера делается на сервере шлюза, с рабочей машины пользователя этот вход не проходит.
 - GPT подключается через OpenAI Responses API в шлюзе. Отдельного процесса Codex нет.
 
