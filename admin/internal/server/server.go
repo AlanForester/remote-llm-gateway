@@ -23,9 +23,12 @@ import (
 var pageHTML string
 
 const (
-	cookieName  = "admin_session"
-	freshCookie = "admin_fresh"
-	csrfCookie  = "admin_csrf"
+	cookieName      = "admin_session"
+	freshCookie     = "admin_fresh"
+	freshNameCookie = "admin_fresh_name"
+	freshModeCookie = "admin_fresh_mode"
+	draftCookie     = "admin_draft"
+	csrfCookie      = "admin_csrf"
 )
 
 // Options configures the admin server.
@@ -60,6 +63,8 @@ func New(opt Options) *Server {
 	s.mux.HandleFunc("POST /logout", s.logout)
 	s.mux.HandleFunc("GET /", s.home)
 	s.mux.HandleFunc("POST /users", s.createUser)
+	s.mux.HandleFunc("POST /users/token/draft", s.draftToken)
+	s.mux.HandleFunc("POST /users/token", s.rotateToken)
 	s.mux.HandleFunc("POST /users/update", s.updateUser)
 	s.mux.HandleFunc("POST /users/delete", s.deleteUser)
 	s.mux.HandleFunc("POST /proxy", s.setProxy)
@@ -105,7 +110,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	s.render(w, s.pageView(s.takeFresh(w, r), "", s.ensureCSRF(w, r)))
+	s.render(w, s.pageView(s.takeFresh(w, r), s.draftValue(r), "", s.ensureCSRF(w, r)))
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -117,12 +122,45 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "Лимит токенов должен быть числом")
 		return
 	}
-	_, token, err := s.opt.Store.CreateUser(r.FormValue("name"), r.FormValue("forcedModel"), r.FormValue("resetEvery"), limit, s.opt.Now())
+	var user store.User
+	var token string
+	if draft := s.draftValue(r); draft != "" {
+		user, token, err = s.opt.Store.CreateUserWithToken(r.FormValue("name"), r.FormValue("forcedModel"), r.FormValue("resetEvery"), limit, s.opt.Now(), draft)
+	} else {
+		user, token, err = s.opt.Store.CreateUser(r.FormValue("name"), r.FormValue("forcedModel"), r.FormValue("resetEvery"), limit, s.opt.Now())
+	}
 	if err != nil {
 		s.fail(w, r, userErr(err))
 		return
 	}
-	s.setCookie(w, r, freshCookie, token, 120)
+	s.setCookie(w, r, draftCookie, "", -1)
+	s.flashToken(w, r, token, user.Name, "new")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) draftToken(w http.ResponseWriter, r *http.Request) {
+	if !s.require(w, r) {
+		return
+	}
+	token, err := store.NewToken()
+	if err != nil {
+		s.fail(w, r, userErr(err))
+		return
+	}
+	s.setCookie(w, r, draftCookie, token, 0)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) rotateToken(w http.ResponseWriter, r *http.Request) {
+	if !s.require(w, r) {
+		return
+	}
+	user, token, err := s.opt.Store.RotateToken(r.FormValue("id"))
+	if err != nil {
+		s.fail(w, r, userErr(err))
+		return
+	}
+	s.flashToken(w, r, token, user.Name, "rotate")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -195,7 +233,7 @@ func (s *Server) require(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, text string) {
-	s.render(w, s.pageView("", text, s.csrfValue(r)))
+	s.render(w, s.pageView(shownToken{}, s.draftValue(r), text, s.csrfValue(r)))
 }
 
 func (s *Server) auth(r *http.Request) bool {
@@ -207,7 +245,7 @@ func (s *Server) auth(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(want)) == 1
 }
 
-func (s *Server) pageView(freshToken, errText, csrf string) view {
+func (s *Server) pageView(fresh shownToken, draft, errText, csrf string) view {
 	now := s.opt.Now()
 	users, _ := s.opt.Store.List(now)
 	names := map[string]string{}
@@ -242,7 +280,10 @@ func (s *Server) pageView(freshToken, errText, csrf string) view {
 		PeriodOptions: periodOptions("day"),
 		Proxy:         adminURL,
 		Effective:     proxy.Resolve(adminURL, adminAt, s.opt.EnvFile),
-		FreshToken:    freshToken,
+		FreshToken:    fresh.Token,
+		FreshName:     fresh.Name,
+		FreshMode:     fresh.Mode,
+		DraftToken:    draft,
 		Error:         errText,
 		CSRF:          csrf,
 	}
@@ -367,13 +408,46 @@ func (s *Server) csrfOK(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
-func (s *Server) takeFresh(w http.ResponseWriter, r *http.Request) string {
+func (s *Server) flashToken(w http.ResponseWriter, r *http.Request, token, name, mode string) {
+	s.setCookie(w, r, freshCookie, token, 120)
+	s.setCookie(w, r, freshNameCookie, hex.EncodeToString([]byte(name)), 120)
+	s.setCookie(w, r, freshModeCookie, mode, 120)
+}
+
+func (s *Server) takeFresh(w http.ResponseWriter, r *http.Request) shownToken {
 	c, err := r.Cookie(freshCookie)
-	if err != nil || c.Value == "" {
-		return ""
+	if err != nil || !validPlainToken(c.Value) {
+		return shownToken{}
 	}
 	s.setCookie(w, r, freshCookie, "", -1)
+	out := shownToken{Token: c.Value}
+	if name, err := r.Cookie(freshNameCookie); err == nil {
+		if raw, err := hex.DecodeString(name.Value); err == nil {
+			out.Name = string(raw)
+		}
+		s.setCookie(w, r, freshNameCookie, "", -1)
+	}
+	if mode, err := r.Cookie(freshModeCookie); err == nil && (mode.Value == "new" || mode.Value == "rotate") {
+		out.Mode = mode.Value
+		s.setCookie(w, r, freshModeCookie, "", -1)
+	}
+	return out
+}
+
+func (s *Server) draftValue(r *http.Request) string {
+	c, err := r.Cookie(draftCookie)
+	if err != nil || !validPlainToken(c.Value) {
+		return ""
+	}
 	return c.Value
+}
+
+func validPlainToken(token string) bool {
+	if len(token) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(token)
+	return err == nil
 }
 
 func secureRequest(r *http.Request) bool {
@@ -424,7 +498,16 @@ type view struct {
 	Proxy         string
 	Effective     string
 	FreshToken    string
+	FreshName     string
+	FreshMode     string
+	DraftToken    string
 	CSRF          string
+}
+
+type shownToken struct {
+	Token string
+	Name  string
+	Mode  string
 }
 
 type dashStats struct {

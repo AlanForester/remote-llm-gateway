@@ -220,6 +220,35 @@ func (s *Store) CreateUser(name, forcedModel, resetEvery string, tokenLimit int6
 	if err != nil {
 		return User{}, "", err
 	}
+	return s.createWithToken(name, forcedModel, every, tokenLimit, now, token)
+}
+
+// CreateUserWithToken inserts a user with a token the admin already showed.
+// The token must be 64 hex characters from NewToken.
+func (s *Store) CreateUserWithToken(name, forcedModel, resetEvery string, tokenLimit int64, now time.Time, token string) (User, string, error) {
+	if !validAccessToken(token) {
+		return User{}, "", ErrBadInput
+	}
+	var err error
+	name, err = bounded(name, 80, false)
+	if err != nil {
+		return User{}, "", err
+	}
+	forcedModel, err = bounded(forcedModel, 120, true)
+	if err != nil {
+		return User{}, "", err
+	}
+	every, err := NormalizePeriod(resetEvery)
+	if err != nil {
+		return User{}, "", err
+	}
+	if tokenLimit < 0 {
+		return User{}, "", ErrBadInput
+	}
+	return s.createWithToken(name, forcedModel, every, tokenLimit, now, token)
+}
+
+func (s *Store) createWithToken(name, forcedModel, every string, tokenLimit int64, now time.Time, token string) (User, string, error) {
 	user := User{
 		ID:          newID(),
 		Name:        name,
@@ -229,7 +258,7 @@ func (s *Store) CreateUser(name, forcedModel, resetEvery string, tokenLimit int6
 		ResetEvery:  every,
 		PeriodStart: now,
 	}
-	err = s.with(func(d *data) error {
+	err := s.with(func(d *data) error {
 		d.Users = append(d.Users, user)
 		return nil
 	})
@@ -245,6 +274,34 @@ type UserPatch struct {
 	ForcedModel *string
 	TokenLimit  *int64
 	ResetEvery  *string
+}
+
+// RotateToken replaces the access token. The previous token stops working.
+func (s *Store) RotateToken(id string) (User, string, error) {
+	token, err := newToken()
+	if err != nil {
+		return User{}, "", err
+	}
+	var user User
+	err = s.with(func(d *data) error {
+		u, i := findUser(d, id)
+		if i < 0 {
+			return ErrNotFound
+		}
+		u.TokenHash = hashToken(token)
+		d.Users[i] = u
+		user = u
+		return nil
+	})
+	if err != nil {
+		return User{}, "", err
+	}
+	return user, token, nil
+}
+
+// NewToken is a new access token. Only its hash is stored.
+func NewToken() (string, error) {
+	return newToken()
 }
 
 // UpdateUser changes admin-controlled fields.
@@ -490,6 +547,14 @@ func findUser(d *data, id string) (User, int) {
 		}
 	}
 	return User{}, -1
+}
+
+func validAccessToken(token string) bool {
+	if len(token) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(token)
+	return err == nil
 }
 
 func hashToken(token string) string {

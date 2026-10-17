@@ -148,7 +148,7 @@ th { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.04em; text-trans
 </section>
 {{else}}
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-{{if .FreshToken}}<p class="token">Токен доступа, показывается один раз: <code>{{.FreshToken}}</code></p>{{end}}
+{{if .FreshToken}}<p class="token">{{if eq .FreshMode "rotate"}}Прежний токен больше не действует. {{end}}Токен доступа{{if .FreshName}} для {{.FreshName}}{{end}}, показывается один раз: <code>{{.FreshToken}}</code></p>{{end}}
 
 <section class="stats">
   <article class="card stat"><span class="label">Пользователи</span><strong>{{.Stats.Users}}</strong></article>
@@ -198,6 +198,19 @@ th { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.04em; text-trans
 
 <h2>Новый пользователь</h2>
 <section class="card">
+  {{if .DraftToken}}
+  <p class="token">Токен для нового пользователя: <code>{{.DraftToken}}</code></p>
+  <form method="post" action="/users/token/draft">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="quiet" type="submit">Перегенерировать</button>
+  </form>
+  <p class="note">Этот токен запишется при создании. Повторная генерация отменяет черновик.</p>
+  {{else}}
+  <form method="post" action="/users/token/draft">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="quiet" type="submit">Сгенерировать токен</button>
+  </form>
+  {{end}}
   <form class="row" method="post" action="/users">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <label><span>Имя</span><input name="name" required></label>
@@ -243,6 +256,11 @@ th { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.04em; text-trans
           <button type="submit">Сохранить</button>
         </form>
         <p class="meta">{{.TokensUsed}} использовано{{if .TokenLimit}} из {{.TokenLimit}}{{end}} · сброс {{.ResetAt}}</p>
+        <form class="row" method="post" action="/users/token">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <button class="quiet" type="submit">Перегенерировать токен</button>
+        </form>
         <form method="post" action="/users/delete">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
           <input type="hidden" name="id" value="{{.ID}}">

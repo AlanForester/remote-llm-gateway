@@ -107,6 +107,109 @@ func TestAdminCreatesUserAndProxy(t *testing.T) {
 	}
 }
 
+func TestDraftTokenAndRotate(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "gateway.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 14, 8, 0, 0, 0, time.UTC)
+	srv := New(Options{Store: st, AdminToken: "secret", Now: func() time.Time { return now }})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := ts.Client()
+	client.Jar = jar
+	res, err := client.PostForm(ts.URL+"/login", url.Values{"token": {"secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrf := csrfFrom(t, readAll(t, res))
+
+	res, err = client.PostForm(ts.URL+"/users/token/draft", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAll(t, res)
+	draft := codeAfter(t, body, "Токен для нового пользователя")
+	res, err = client.PostForm(ts.URL+"/users/token/draft", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, res)
+	again := codeAfter(t, body, "Токен для нового пользователя")
+	if again == draft {
+		t.Fatal("draft token was not replaced")
+	}
+	res, err = client.PostForm(ts.URL+"/users", url.Values{
+		"csrf":       {csrf},
+		"name":       {"ann"},
+		"tokenLimit": {"0"},
+		"resetEvery": {"day"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, res)
+	if !strings.Contains(body, "для ann") || codeAfter(t, body, "Токен доступа") != again {
+		t.Fatalf("created with a different token: %s", body)
+	}
+	if _, err := st.Authenticate(again, now); err != nil {
+		t.Fatal(err)
+	}
+	users, err := st.List(now)
+	if err != nil || len(users) != 1 {
+		t.Fatal(err)
+	}
+	res, err = client.PostForm(ts.URL+"/users/token", url.Values{"csrf": {csrf}, "id": {users[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, res)
+	if !strings.Contains(body, "Прежний токен больше не действует") {
+		t.Fatalf("body %s", body)
+	}
+	rotated := codeAfter(t, body, "Токен доступа")
+	if rotated == again {
+		t.Fatal("token did not change")
+	}
+	if _, err := st.Authenticate(again, now); err != store.ErrUnauthorized {
+		t.Fatal(err)
+	}
+	if _, err := st.Authenticate(rotated, now); err != nil {
+		t.Fatal(err)
+	}
+	hidden, err := client.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readAll(t, hidden), rotated) {
+		t.Fatal("rotated token shown twice")
+	}
+}
+
+func codeAfter(t *testing.T, body, label string) string {
+	t.Helper()
+	i := strings.Index(body, label)
+	if i < 0 {
+		t.Fatalf("%s missing: %s", label, body)
+	}
+	rest := body[i:]
+	const needle = "<code>"
+	j := strings.Index(rest, needle)
+	if j < 0 {
+		t.Fatalf("code missing after %s", label)
+	}
+	rest = rest[j+len(needle):]
+	k := strings.Index(rest, "</code>")
+	if k <= 0 {
+		t.Fatal("code end missing")
+	}
+	return rest[:k]
+}
+
 func csrfFrom(t *testing.T, body string) string {
 	t.Helper()
 	const needle = `name="csrf" value="`

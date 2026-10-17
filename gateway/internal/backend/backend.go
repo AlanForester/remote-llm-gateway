@@ -138,6 +138,28 @@ func startEcho() Agent {
 }
 
 func startProcess(ctx context.Context, command []string, dir, proxyURL string) (Agent, error) {
+	raw, err := startRaw(ctx, command, dir, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	agent := &acpAgent{
+		raw:        raw,
+		next:       2,
+		autoAccept: true,
+		clientIDs:  map[string]json.RawMessage{},
+		texts:      map[string]*strings.Builder{},
+		silent:     map[string]bool{},
+	}
+	sessionID, err := agent.handshake(ctx, dir)
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	agent.sessionID = sessionID
+	return agent, nil
+}
+
+func startRaw(ctx context.Context, command []string, dir, proxyURL string) (Agent, error) {
 	if len(command) == 0 {
 		return nil, errors.New("empty command")
 	}

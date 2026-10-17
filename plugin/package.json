@@ -18,6 +18,10 @@
   "contributes": {
     "commands": [
       {
+        "command": "remoteLlm.open",
+        "title": "Remote LLM: открыть чат"
+      },
+      {
         "command": "remoteLlm.showModel",
         "title": "Remote LLM: показать назначенную модель"
       },
@@ -26,8 +30,17 @@
         "title": "Remote LLM: задать токен"
       }
     ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "remoteLlmSidebar",
+          "title": "Remote LLM",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "remoteLlmSidebar": [
         {
           "type": "webview",
           "id": "remoteLlm.chat",

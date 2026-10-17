@@ -1,7 +1,8 @@
-const crypto = require("crypto");
 const path = require("path");
 const vscode = require("vscode");
+const { chatPage } = require("./chat-page");
 const sync = require("./sync");
+const turn = require("./turn");
 const ws = require("./ws");
 
 const tokenKey = "remoteLlm.gatewayToken";
@@ -10,6 +11,9 @@ let secrets;
 function activate(context) {
   secrets = context.secrets;
   context.subscriptions.push(
+    vscode.commands.registerCommand("remoteLlm.open", () =>
+      vscode.commands.executeCommand("remoteLlm.chat.focus")
+    ),
     vscode.commands.registerCommand("remoteLlm.showModel", () => showModel()),
     vscode.commands.registerCommand("remoteLlm.setToken", () => setToken())
   );
@@ -88,23 +92,88 @@ class ChatView {
     this.socket = null;
     this.nextId = 1;
     this.busy = false;
+    this.model = "grok";
+    this.forced = false;
+    this.effort = "high";
+    this.autoAccept = true;
+    this.permissionWait = null;
   }
 
   resolveWebviewView(view) {
     this.view = view;
     view.webview.options = { enableScripts: true };
-    view.webview.html = chatHtml();
+    view.webview.html = chatPage();
     view.webview.onDidReceiveMessage((msg) => {
-      if (msg && msg.type === "prompt") {
+      if (!msg) {
+        return;
+      }
+      if (msg.type === "prompt") {
+        if (msg.effort) {
+          this.effort = String(msg.effort);
+        }
+        if (typeof msg.autoAccept === "boolean") {
+          this.autoAccept = msg.autoAccept;
+        }
         this.onPrompt(String(msg.text || "")).catch((err) => {
           this.post("error", String(err.message || err));
         });
+      } else if (msg.type === "model" && !this.forced && !this.sessionId) {
+        this.model = normalizeModel(msg.model);
+        this.publishProfile();
+      } else if (msg.type === "new") {
+        this.newSession();
+      } else if (msg.type === "attach") {
+        this.attachFile().catch((err) => {
+          this.post("error", String(err.message || err));
+        });
+      } else if (msg.type === "permission" && this.permissionWait) {
+        const resolve = this.permissionWait;
+        this.permissionWait = null;
+        resolve(String(msg.optionId || ""));
       }
     });
     view.onDidDispose(() => {
       if (this.socket) {
         this.socket.close();
       }
+    });
+    this.refreshProfile().catch((err) => {
+      this.post("error", String(err.message || err));
+    });
+  }
+
+  newSession() {
+    if (this.busy) {
+      return;
+    }
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+    this.sessionId = "";
+    this.post("clear", "");
+    this.publishProfile();
+  }
+
+  async refreshProfile() {
+    const cfg = vscode.workspace.getConfiguration("remoteLlm");
+    if (!cfg.get("useRemoteGateway")) {
+      return;
+    }
+    const body = await getJSON(cfg, "/v1/me");
+    this.forced = !!body.forced;
+    if (this.forced && body.model) {
+      this.model = body.model;
+    }
+    this.publishProfile();
+  }
+
+  publishProfile() {
+    this.view.webview.postMessage({
+      type: "profile",
+      model: this.model,
+      forced: this.forced,
+      locked: !!this.sessionId,
     });
   }
 
@@ -114,6 +183,9 @@ class ChatView {
       return;
     }
     this.busy = true;
+    this.post("busy", "1");
+    this.post("you", trimmed);
+    this.postActivity("wait", "Отправляю проект…");
     try {
       const cfg = vscode.workspace.getConfiguration("remoteLlm");
       if (!cfg.get("useRemoteGateway")) {
@@ -135,22 +207,38 @@ class ChatView {
           Authorization: "Bearer " + (await gatewayToken()),
         });
       }
-      this.post("you", trimmed);
+      this.postActivity("wait", "Thinking…");
       const id = this.nextId++;
       this.socket.send(
         JSON.stringify({
           jsonrpc: "2.0",
           id,
           method: "session/prompt",
-          params: { text: trimmed },
+          params: {
+            text: trimmed,
+            effort: this.effort || "high",
+            autoAccept: this.autoAccept !== false,
+          },
         })
       );
-      const reply = await readResult(this.socket, id);
+      const outcome = await turn.readTurn(
+        this.socket,
+        id,
+        (activity) => {
+          this.postActivity(activity.phase, activity.text, activity.id, activity);
+        },
+        (request) => this.askPermission(request)
+      );
+      const reply = outcome.msg;
       if (reply.error) {
         throw new Error(reply.error.message || "Шлюз отказал.");
       }
-      const answer = (reply.result && reply.result.text) || JSON.stringify(reply.result || {});
-      this.post("agent", answer);
+      const shown = turn.replyText(reply);
+      if (shown && !(shown.kind === "agent" && outcome.streamed)) {
+        this.post(shown.kind, shown.text);
+      } else if (!shown && !outcome.streamed && !outcome.thought) {
+        this.post("status", "Пустой ответ");
+      }
       const changed = await getJSON(
         cfg,
         "/v1/sessions/" + this.sessionId + "/changes"
@@ -166,16 +254,23 @@ class ChatView {
       }
       throw err;
     } finally {
+      this.postActivity("done", "");
       this.busy = false;
+      this.post("busy", "");
     }
   }
 
   async openSession(cfg, folder) {
     const created = await postJSON(cfg, "/v1/sessions", {
       workspace: folder.uri.fsPath,
-      model: "",
+      model: this.forced ? "" : this.model,
     });
     this.sessionId = created.sessionId;
+    this.forced = !!created.forced;
+    if (created.model) {
+      this.model = created.model;
+    }
+    this.publishProfile();
     const who = created.forced
       ? "Назначена в админке: " + created.model
       : "Модель: " + created.model;
@@ -187,6 +282,56 @@ class ChatView {
       return;
     }
     this.view.webview.postMessage({ type: kind, text });
+  }
+
+  postActivity(phase, text, id, extra) {
+    if (!this.view) {
+      return;
+    }
+    const more = extra || {};
+    this.view.webview.postMessage({
+      type: "activity",
+      phase,
+      text: text || "",
+      id: id || "",
+      kind: more.kind || "",
+      used: more.used,
+      size: more.size,
+    });
+  }
+
+  askPermission(request) {
+    const params = (request && request.params) || {};
+    const tool = params.toolCall || {};
+    const options = params.options || [];
+    return new Promise((resolve) => {
+      this.permissionWait = resolve;
+      this.view.webview.postMessage({
+        type: "permission",
+        title: tool.title || "Allow this action?",
+        options,
+      });
+    }).then((optionId) => turn.permissionResponse(request, optionId));
+  }
+
+  async attachFile() {
+    const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+    if (!folder) {
+      throw new Error("Откройте папку проекта.");
+    }
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      defaultUri: folder.uri,
+      openLabel: "Упомянуть файл",
+    });
+    if (!picked || !picked[0]) {
+      return;
+    }
+    let rel = path.relative(folder.uri.fsPath, picked[0].fsPath).replace(/\\/g, "/");
+    if (!rel || rel.startsWith("..")) {
+      rel = picked[0].fsPath;
+    }
+    this.view.webview.postMessage({ type: "insert", text: "@" + rel + " " });
   }
 }
 
@@ -253,16 +398,6 @@ async function applyChanges(folder, files) {
   }
 }
 
-async function readResult(socket, id) {
-  for (;;) {
-    const text = await socket.next();
-    const msg = JSON.parse(text);
-    if (msg.id === id) {
-      return msg;
-    }
-  }
-}
-
 async function gatewayConfig(cfg) {
   return { base: httpBase(cfg.get("gatewayUrl")), token: await gatewayToken() };
 }
@@ -309,57 +444,20 @@ async function readBody(res) {
   return body;
 }
 
+function normalizeModel(value) {
+  const name = String(value || "").toLowerCase();
+  if (name.indexOf("claude") >= 0) {
+    return "claude";
+  }
+  if (name.indexOf("gpt") >= 0 || name.indexOf("openai") >= 0 || name.indexOf("codex") >= 0) {
+    return "gpt";
+  }
+  return "grok";
+}
+
 function httpBase(url) {
   const raw = String(url || "").replace(/\/$/, "");
   return raw.replace(/^ws:/, "http:").replace(/^wss:/, "https:");
-}
-
-function chatHtml() {
-  const nonce = crypto.randomBytes(16).toString("hex");
-  return `<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
-<style>
-  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); margin: 0; padding: 8px; }
-  #log { white-space: pre-wrap; min-height: 8em; }
-  .you { margin: 6px 0; }
-  .agent { margin: 6px 0; }
-  .file, .status { opacity: 0.8; }
-  .error { color: var(--vscode-errorForeground); }
-  form { display: flex; gap: 6px; margin-top: 8px; }
-  textarea { flex: 1; min-height: 4em; }
-</style>
-</head>
-<body>
-<div id="log"></div>
-<form>
-  <textarea id="text" placeholder="Запрос агенту"></textarea>
-  <button type="submit">Отправить</button>
-</form>
-<script nonce="${nonce}">
-  const vscode = acquireVsCodeApi();
-  const log = document.getElementById("log");
-  document.querySelector("form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const text = document.getElementById("text").value.trim();
-    if (!text) return;
-    document.getElementById("text").value = "";
-    vscode.postMessage({ type: "prompt", text });
-  });
-  window.addEventListener("message", (event) => {
-    const msg = event.data || {};
-    const line = document.createElement("div");
-    const kinds = ["you", "agent", "error", "file", "status"];
-    line.className = kinds.indexOf(msg.type) >= 0 ? msg.type : "status";
-    const prefix = { you: "Вы: ", agent: "Агент: ", error: "", file: "", status: "" };
-    line.textContent = (prefix[msg.type] || "") + (msg.text || "");
-    log.appendChild(line);
-  });
-</script>
-</body>
-</html>`;
 }
 
 function deactivate() {}

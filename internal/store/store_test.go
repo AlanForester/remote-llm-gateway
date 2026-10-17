@@ -98,6 +98,32 @@ func TestProxyAndUpdate(t *testing.T) {
 	}
 }
 
+func TestRotateTokenReplacesTheOldOne(t *testing.T) {
+	s := openTest(t)
+	now := time.Now().UTC()
+	user, old, err := s.CreateUser("ann", "", "day", 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, next, err := s.RotateToken(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != user.ID || next == "" || next == old {
+		t.Fatalf("rotated %+v %q", got, next)
+	}
+	if _, err := s.Authenticate(old, now); err != ErrUnauthorized {
+		t.Fatal(err)
+	}
+	authed, err := s.Authenticate(next, now)
+	if err != nil || authed.ID != user.ID {
+		t.Fatalf("%+v %v", authed, err)
+	}
+	if _, _, err := s.CreateUserWithToken("bob", "", "day", 0, now, "short"); err != ErrBadInput {
+		t.Fatal(err)
+	}
+}
+
 func openTest(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(filepath.Join(t.TempDir(), "gateway.json"))
