@@ -4,14 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/AlanForester/remote-llm-gateway/gateway/internal/mcp"
 )
 
-const maxToolRounds = 8
+const (
+	maxToolRounds       = 8
+	openAIContextWindow = 200000
+)
 
 func startOpenAI(base, key, model, proxyURL, dir, mcpConfig string) (Agent, error) {
 	servers, err := mcp.Load(mcpConfig)
@@ -22,13 +27,23 @@ func startOpenAI(base, key, model, proxyURL, dir, mcpConfig string) (Agent, erro
 	if err != nil {
 		return nil, err
 	}
-	replies := make(chan []byte, 4)
+	replies := make(chan []byte, 32)
 	client := &http.Client{Transport: proxyTransport(proxyURL)}
+	var cancelMu sync.Mutex
+	var cancelTurn context.CancelFunc
 	return &lineAgent{
 		sendFn: func(ctx context.Context, msg []byte) error {
 			var in rpcMessage
 			if err := json.Unmarshal(msg, &in); err != nil {
 				return err
+			}
+			if in.Method == "session/cancel" {
+				cancelMu.Lock()
+				if cancelTurn != nil {
+					cancelTurn()
+				}
+				cancelMu.Unlock()
+				return nil
 			}
 			if !isPromptMethod(in.Method) {
 				replies <- rpcResult(in.ID, map[string]any{})
@@ -39,13 +54,55 @@ func startOpenAI(base, key, model, proxyURL, dir, mcpConfig string) (Agent, erro
 				return nil
 			}
 			var params struct {
-				Text string `json:"text"`
+				Effort string `json:"effort"`
+				Stream bool   `json:"stream"`
 			}
 			_ = json.Unmarshal(in.Params, &params)
-			text, tokens, err := toolLoop(ctx, client, base, key, model, dir, hub, params.Text)
+			emitUpdates := strings.TrimSpace(params.Effort) != "" || params.Stream
+			prompt := promptText(in.Params)
+
+			turnCtx, cancel := context.WithCancel(ctx)
+			cancelMu.Lock()
+			cancelTurn = cancel
+			cancelMu.Unlock()
+			defer func() {
+				cancel()
+				cancelMu.Lock()
+				cancelTurn = nil
+				cancelMu.Unlock()
+			}()
+
+			var notify func(update map[string]any)
+			if emitUpdates {
+				notify = func(update map[string]any) {
+					b, err := json.Marshal(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params":  map[string]any{"update": update},
+					})
+					if err == nil {
+						select {
+						case replies <- b:
+						default:
+						}
+					}
+				}
+			}
+			text, tokens, err := toolLoop(turnCtx, client, base, key, model, dir, hub, prompt, notify)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					replies <- rpcResult(in.ID, map[string]any{"stopReason": "cancelled"})
+					return nil
+				}
 				replies <- rpcFail(in.ID, -32000, err.Error())
 				return nil
+			}
+			if notify != nil && tokens > 0 {
+				notify(map[string]any{
+					"sessionUpdate": "usage_update",
+					"used":          tokens,
+					"size":          openAIContextWindow,
+				})
 			}
 			replies <- rpcResult(in.ID, map[string]any{
 				"text":  text,
@@ -65,6 +122,11 @@ func startOpenAI(base, key, model, proxyURL, dir, mcpConfig string) (Agent, erro
 			}
 		},
 		close: func() error {
+			cancelMu.Lock()
+			if cancelTurn != nil {
+				cancelTurn()
+			}
+			cancelMu.Unlock()
 			hub.Close()
 			return nil
 		},
@@ -80,7 +142,20 @@ func isPromptMethod(method string) bool {
 	}
 }
 
-func toolLoop(ctx context.Context, client *http.Client, base, key, model, dir string, hub *mcp.Hub, text string) (string, int64, error) {
+func openAIToolKind(name string) string {
+	switch name {
+	case "read_file", "list_dir":
+		return "read"
+	case "write_file":
+		return "edit"
+	case "run_command":
+		return "execute"
+	default:
+		return "other"
+	}
+}
+
+func toolLoop(ctx context.Context, client *http.Client, base, key, model, dir string, hub *mcp.Hub, text string, notify func(map[string]any)) (string, int64, error) {
 	input := []any{
 		map[string]any{"role": "user", "content": text},
 	}
@@ -115,10 +190,29 @@ func toolLoop(ctx context.Context, client *http.Client, base, key, model, dir st
 		}
 		outputs := make([]any, 0, len(parsed.calls))
 		for _, call := range parsed.calls {
+			if notify != nil {
+				notify(map[string]any{
+					"sessionUpdate": "tool_call",
+					"toolCallId":    call.id,
+					"kind":          openAIToolKind(call.name),
+					"title":         call.name,
+					"status":        "in_progress",
+				})
+			}
+			out := runTool(ctx, dir, hub, call.name, call.args)
+			if notify != nil {
+				notify(map[string]any{
+					"sessionUpdate": "tool_call_update",
+					"toolCallId":    call.id,
+					"kind":          openAIToolKind(call.name),
+					"title":         call.name,
+					"status":        "completed",
+				})
+			}
 			outputs = append(outputs, map[string]any{
 				"type":    "function_call_output",
 				"call_id": call.id,
-				"output":  runTool(ctx, dir, hub, call.name, call.args),
+				"output":  out,
 			})
 		}
 		if parsed.id != "" {

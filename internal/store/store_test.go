@@ -124,6 +124,56 @@ func TestRotateTokenReplacesTheOldOne(t *testing.T) {
 	}
 }
 
+func TestSessionHistoryAndContextWindow(t *testing.T) {
+	s := openTest(t)
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	user, _, err := s.CreateUser("ann", "", "day", 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ContextWindow("grok-4.6"); got != 500000 {
+		t.Fatalf("grok context = %d", got)
+	}
+	if got := ContextWindow("claude-sonnet"); got != 200000 {
+		t.Fatalf("claude context = %d", got)
+	}
+	if got := ContextWindow("gpt-4o"); got != 200000 {
+		t.Fatalf("gpt context = %d", got)
+	}
+
+	rec := SessionRecord{
+		ID:        "sess-1",
+		UserID:    user.ID,
+		Model:     "grok",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.SaveSession(rec); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.AppendSessionTurn("sess-1", user.ID, "Почини main.php\nвторая строка", "Готово, исправил.", 120, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Почини main.php" || updated.TokensUsed != 120 || len(updated.Messages) != 2 {
+		t.Fatalf("updated = %+v", updated)
+	}
+	list, err := s.ListSessions(user.ID)
+	if err != nil || len(list) != 1 || list[0].Title != "Почини main.php" || len(list[0].Messages) != 0 {
+		t.Fatalf("list = %+v %v", list, err)
+	}
+	full, err := s.GetSession("sess-1", user.ID)
+	if err != nil || len(full.Messages) != 2 || full.Messages[0].Role != "you" || full.Messages[1].Role != "agent" {
+		t.Fatalf("full = %+v %v", full, err)
+	}
+	if err := s.DeleteSession("sess-1", user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSession("sess-1", user.ID); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func openTest(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(filepath.Join(t.TempDir(), "gateway.json"))

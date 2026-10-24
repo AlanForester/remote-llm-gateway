@@ -89,20 +89,29 @@ async function showModel() {
 class ChatView {
   constructor() {
     this.sessionId = "";
+    this.sessionTitle = "New session";
     this.socket = null;
     this.nextId = 1;
     this.busy = false;
     this.model = "grok";
     this.forced = false;
+    this.contextWindow = 500000;
     this.effort = "high";
     this.autoAccept = true;
     this.permissionWait = null;
+    this.uploadedHashes = null;
+    this.editorSub = null;
   }
 
   resolveWebviewView(view) {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.html = chatPage();
+    if (vscode.window && typeof vscode.window.onDidChangeActiveTextEditor === "function") {
+      this.editorSub = vscode.window.onDidChangeActiveTextEditor(() => {
+        this.publishActiveFile();
+      });
+    }
     view.webview.onDidReceiveMessage((msg) => {
       if (!msg) {
         return;
@@ -114,14 +123,35 @@ class ChatView {
         if (typeof msg.autoAccept === "boolean") {
           this.autoAccept = msg.autoAccept;
         }
-        this.onPrompt(String(msg.text || "")).catch((err) => {
+        this.onPrompt(String(msg.text || ""), String(msg.activeFile || "")).catch((err) => {
           this.post("error", String(err.message || err));
         });
+      } else if (msg.type === "cancel") {
+        this.cancelTurn();
       } else if (msg.type === "model" && !this.forced && !this.sessionId) {
         this.model = normalizeModel(msg.model);
+        this.contextWindow = defaultWindowFor(this.model);
         this.publishProfile();
       } else if (msg.type === "new") {
         this.newSession();
+      } else if (msg.type === "history") {
+        this.loadHistory().catch((err) => {
+          this.post("error", String(err.message || err));
+        });
+      } else if (msg.type === "loadSession" && msg.sessionId) {
+        this.restoreSession(String(msg.sessionId)).catch((err) => {
+          this.post("error", String(err.message || err));
+        });
+      } else if (msg.type === "deleteSession" && msg.sessionId) {
+        this.removeSession(String(msg.sessionId)).catch((err) => {
+          this.post("error", String(err.message || err));
+        });
+      } else if (msg.type === "setToken") {
+        setToken().then(() => this.refreshProfile()).catch(() => {});
+      } else if (msg.type === "showModel") {
+        showModel();
+      } else if (msg.type === "openSettings") {
+        vscode.commands.executeCommand("workbench.action.openSettings", "remoteLlm");
       } else if (msg.type === "attach") {
         this.attachFile().catch((err) => {
           this.post("error", String(err.message || err));
@@ -136,10 +166,58 @@ class ChatView {
       if (this.socket) {
         this.socket.close();
       }
+      if (this.editorSub) {
+        this.editorSub.dispose();
+        this.editorSub = null;
+      }
     });
+    this.publishActiveFile();
     this.refreshProfile().catch((err) => {
       this.post("error", String(err.message || err));
     });
+  }
+
+  publishActiveFile() {
+    if (!this.view) {
+      return;
+    }
+    const editor = vscode.window && vscode.window.activeTextEditor;
+    if (!editor || !editor.document || editor.document.isUntitled) {
+      this.view.webview.postMessage({ type: "activeFile", path: "", name: "" });
+      return;
+    }
+    const fsPath = editor.document.uri && editor.document.uri.fsPath;
+    if (!fsPath) {
+      this.view.webview.postMessage({ type: "activeFile", path: "", name: "" });
+      return;
+    }
+    const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+    let rel = folder ? path.relative(folder.uri.fsPath, fsPath).replace(/\\/g, "/") : path.basename(fsPath);
+    if (!rel || rel.startsWith("..")) {
+      rel = path.basename(fsPath);
+    }
+    this.view.webview.postMessage({
+      type: "activeFile",
+      path: rel,
+      name: path.basename(rel),
+    });
+  }
+
+  cancelTurn() {
+    if (!this.busy || !this.socket) {
+      return;
+    }
+    try {
+      this.socket.send(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/cancel",
+          params: { sessionId: this.sessionId },
+        })
+      );
+    } catch (_) {
+      // Socket may already be closing.
+    }
   }
 
   newSession() {
@@ -151,33 +229,94 @@ class ChatView {
       this.socket = null;
     }
     this.sessionId = "";
+    this.sessionTitle = "New session";
+    this.uploadedHashes = null;
     this.post("clear", "");
     this.publishProfile();
+    this.publishActiveFile();
+  }
+
+  async loadHistory() {
+    const cfg = vscode.workspace.getConfiguration("remoteLlm");
+    if (!cfg.get("useRemoteGateway")) {
+      this.view.webview.postMessage({ type: "sessions", sessions: [] });
+      return;
+    }
+    const body = await getJSON(cfg, "/v1/sessions");
+    this.view.webview.postMessage({
+      type: "sessions",
+      sessions: body.sessions || [],
+    });
+  }
+
+  async restoreSession(sessionId) {
+    if (this.busy) {
+      return;
+    }
+    const cfg = vscode.workspace.getConfiguration("remoteLlm");
+    const rec = await getJSON(cfg, "/v1/sessions/" + encodeURIComponent(sessionId));
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+    this.sessionId = rec.id || sessionId;
+    this.sessionTitle = rec.title || "New session";
+    this.uploadedHashes = null;
+    if (rec.model) {
+      this.model = normalizeModel(rec.model);
+    }
+    if (rec.contextWindow) {
+      this.contextWindow = rec.contextWindow;
+    }
+    this.view.webview.postMessage({ type: "restore", session: rec });
+    this.publishProfile();
+  }
+
+  async removeSession(sessionId) {
+    const cfg = vscode.workspace.getConfiguration("remoteLlm");
+    await deleteJSON(cfg, "/v1/sessions/" + encodeURIComponent(sessionId));
+    if (this.sessionId === sessionId) {
+      this.newSession();
+    }
+    await this.loadHistory();
   }
 
   async refreshProfile() {
     const cfg = vscode.workspace.getConfiguration("remoteLlm");
     if (!cfg.get("useRemoteGateway")) {
+      this.publishProfile();
       return;
     }
-    const body = await getJSON(cfg, "/v1/me");
+    const body = await getJSON(cfg, "/v1/me?model=" + encodeURIComponent(this.model));
     this.forced = !!body.forced;
     if (this.forced && body.model) {
-      this.model = body.model;
+      this.model = normalizeModel(body.model);
+    }
+    if (body.contextWindow) {
+      this.contextWindow = body.contextWindow;
+    } else {
+      this.contextWindow = defaultWindowFor(this.model);
     }
     this.publishProfile();
   }
 
   publishProfile() {
+    if (!this.view) {
+      return;
+    }
+    const cfg = vscode.workspace.getConfiguration("remoteLlm");
     this.view.webview.postMessage({
       type: "profile",
       model: this.model,
       forced: this.forced,
       locked: !!this.sessionId,
+      contextWindow: this.contextWindow || defaultWindowFor(this.model),
+      title: this.sessionTitle || "New session",
+      remote: !!cfg.get("useRemoteGateway"),
     });
   }
 
-  async onPrompt(text) {
+  async onPrompt(text, activeFile) {
     const trimmed = text.trim();
     if (!trimmed || this.busy) {
       return;
@@ -198,8 +337,9 @@ class ChatView {
       if (!this.sessionId) {
         await this.openSession(cfg, folder);
       }
-      const skipped = await uploadProject(cfg, folder, this.sessionId);
-      for (const name of skipped) {
+      const syncResult = await uploadProject(cfg, folder, this.sessionId, this.uploadedHashes);
+      this.uploadedHashes = syncResult.hashes;
+      for (const name of syncResult.skipped) {
         this.post("status", "пропущен " + name);
       }
       if (!this.socket) {
@@ -218,6 +358,7 @@ class ChatView {
             text: trimmed,
             effort: this.effort || "high",
             autoAccept: this.autoAccept !== false,
+            activeFile: activeFile || "",
           },
         })
       );
@@ -243,7 +384,7 @@ class ChatView {
         cfg,
         "/v1/sessions/" + this.sessionId + "/changes"
       );
-      await applyChanges(folder, changed.files || []);
+      await applyChanges(folder, changed.files || [], this.uploadedHashes);
       for (const file of changed.files || []) {
         this.post("file", file.deleted ? "удалён " + file.path : "записан " + file.path);
       }
@@ -266,9 +407,14 @@ class ChatView {
       model: this.forced ? "" : this.model,
     });
     this.sessionId = created.sessionId;
+    this.sessionTitle = created.title || "New session";
     this.forced = !!created.forced;
+    this.uploadedHashes = null;
     if (created.model) {
-      this.model = created.model;
+      this.model = normalizeModel(created.model);
+    }
+    if (created.contextWindow) {
+      this.contextWindow = created.contextWindow;
     }
     this.publishProfile();
     const who = created.forced
@@ -335,10 +481,10 @@ class ChatView {
   }
 }
 
-async function uploadProject(cfg, folder, sessionId) {
+async function uploadProject(cfg, folder, sessionId, prevHashes) {
   const uris = await vscode.workspace.findFiles(
     "**/*",
-    "**/{.git,node_modules,vendor}/**",
+    "**/{.git,node_modules,vendor,.next,dist,build,target,.venv,venv,__pycache__}/**",
     sync.MAX_FILES
   );
   if (uris.length >= sync.MAX_FILES) {
@@ -369,11 +515,18 @@ async function uploadProject(cfg, folder, sessionId) {
     }
     files.push(file);
   }
-  await putJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files });
-  return skipped;
+  if (!prevHashes) {
+    await putJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files });
+    return { skipped, hashes: sync.hashSnapshot(files) };
+  }
+  const { patch, nextMap } = sync.diffSnapshot(prevHashes, files);
+  if (patch.length > 0) {
+    await patchJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files: patch });
+  }
+  return { skipped, hashes: nextMap };
 }
 
-async function applyChanges(folder, files) {
+async function applyChanges(folder, files, knownHashes) {
   const plan = sync.planApply(files);
   for (const file of plan.writes) {
     const parts = file.path.split("/");
@@ -384,6 +537,13 @@ async function applyChanges(folder, files) {
     }
     const uri = vscode.Uri.joinPath(folder.uri, ...parts);
     await vscode.workspace.fs.writeFile(uri, file.body);
+    if (knownHashes) {
+      const entry = sync.fileFromBuffer(file.path, file.body);
+      if (entry) {
+        const sub = sync.hashSnapshot([entry]);
+        knownHashes.set(file.path, sub.get(file.path));
+      }
+    }
   }
   for (const rel of plan.deletes) {
     const uri = vscode.Uri.joinPath(folder.uri, ...rel.split("/"));
@@ -394,6 +554,9 @@ async function applyChanges(folder, files) {
       if (code !== "FileNotFound" && code !== "EntryNotFound") {
         throw err;
       }
+    }
+    if (knownHashes) {
+      knownHashes.delete(rel);
     }
   }
 }
@@ -436,6 +599,28 @@ async function putJSON(cfg, route, payload) {
   return readBody(res);
 }
 
+async function patchJSON(cfg, route, payload) {
+  const { base, token } = await gatewayConfig(cfg);
+  const res = await fetch(base + route, {
+    method: "PATCH",
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return readBody(res);
+}
+
+async function deleteJSON(cfg, route) {
+  const { base, token } = await gatewayConfig(cfg);
+  const res = await fetch(base + route, {
+    method: "DELETE",
+    headers: { Authorization: "Bearer " + token },
+  });
+  return readBody(res);
+}
+
 async function readBody(res) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -455,6 +640,10 @@ function normalizeModel(value) {
   return "grok";
 }
 
+function defaultWindowFor(model) {
+  return normalizeModel(model) === "grok" ? 500000 : 200000;
+}
+
 function httpBase(url) {
   const raw = String(url || "").replace(/\/$/, "");
   return raw.replace(/^ws:/, "http:").replace(/^wss:/, "https:");
@@ -463,3 +652,4 @@ function httpBase(url) {
 function deactivate() {}
 
 module.exports = { activate, deactivate, httpBase };
+

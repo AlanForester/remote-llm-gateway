@@ -414,3 +414,104 @@ const ws = require(process.env.WS_CLIENT);
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
+
+func TestSessionHistoryAndPatchFiles(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "gateway.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
+	user, token, err := st.CreateUser("ann", "", "day", 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Options{Store: st, Echo: true, WorkRoot: filepath.Join(dir, "work"), Now: func() time.Time { return now }})
+	h := srv.Handler()
+
+	doJSON := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		var r *bytes.Buffer
+		if body != "" {
+			r = bytes.NewBufferString(body)
+		} else {
+			r = bytes.NewBuffer(nil)
+		}
+		req := httptest.NewRequest(method, path, r)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	res := doJSON(http.MethodPost, "/v1/sessions", `{"workspace":"/local/app","model":"grok"}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("create session status %d: %s", res.Code, res.Body.String())
+	}
+	var created struct {
+		SessionID     string `json:"sessionId"`
+		Title         string `json:"title"`
+		ContextWindow int64  `json:"contextWindow"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.SessionID == "" || created.Title != "New session" || created.ContextWindow != 500000 {
+		t.Fatalf("unexpected created: %+v", created)
+	}
+
+	// Put initial files, then patch one file and delete one file.
+	if r := doJSON(http.MethodPut, "/v1/sessions/"+created.SessionID+"/files", `{"files":[{"path":"a.txt","content":"v1"},{"path":"b.txt","content":"v1"}]}`); r.Code != http.StatusOK {
+		t.Fatalf("put files: %d", r.Code)
+	}
+	if r := doJSON(http.MethodPatch, "/v1/sessions/"+created.SessionID+"/files", `{"files":[{"path":"a.txt","content":"v2"},{"path":"b.txt","deleted":true}]}`); r.Code != http.StatusOK {
+		t.Fatalf("patch files: %d", r.Code)
+	}
+	workDir := onlyChildDir(t, filepath.Join(dir, "work"))
+	gotA, err := os.ReadFile(filepath.Join(workDir, "a.txt"))
+	if err != nil || string(gotA) != "v2" {
+		t.Fatalf("patched a.txt: %q %v", gotA, err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "b.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected b.txt deleted, err=%v", err)
+	}
+
+	// Record a turn and check history endpoints.
+	if _, err := st.AppendSessionTurn(created.SessionID, user.ID, "Fix login bug", "Done", 120, now); err != nil {
+		t.Fatal(err)
+	}
+	listRes := doJSON(http.MethodGet, "/v1/sessions", "")
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("list sessions: %d", listRes.Code)
+	}
+	var listed struct {
+		Sessions []store.SessionRecord `json:"sessions"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Sessions) != 1 || listed.Sessions[0].Title != "Fix login bug" {
+		t.Fatalf("listed: %+v", listed.Sessions)
+	}
+
+	getRes := doJSON(http.MethodGet, "/v1/sessions/"+created.SessionID, "")
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("get session: %d", getRes.Code)
+	}
+	var detail store.SessionRecord
+	if err := json.Unmarshal(getRes.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Messages) != 2 || detail.Messages[0].Text != "Fix login bug" || detail.Messages[1].Text != "Done" {
+		t.Fatalf("detail messages: %+v", detail.Messages)
+	}
+
+	delRes := doJSON(http.MethodDelete, "/v1/sessions/"+created.SessionID, "")
+	if delRes.Code != http.StatusOK {
+		t.Fatalf("delete session: %d", delRes.Code)
+	}
+	if r := doJSON(http.MethodGet, "/v1/sessions/"+created.SessionID, ""); r.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", r.Code)
+	}
+}
+

@@ -44,11 +44,33 @@ type UsageEvent struct {
 	Model  string    `json:"model"`
 }
 
+// SessionMessage is one saved message in a conversation history.
+type SessionMessage struct {
+	Role string    `json:"role"`
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
+
+// SessionRecord stores session metadata and conversation history.
+type SessionRecord struct {
+	ID            string           `json:"id"`
+	UserID        string           `json:"userId"`
+	Title         string           `json:"title"`
+	Workspace     string           `json:"workspace,omitempty"`
+	Model         string           `json:"model"`
+	CreatedAt     time.Time        `json:"createdAt"`
+	UpdatedAt     time.Time        `json:"updatedAt"`
+	TokensUsed    int64            `json:"tokensUsed"`
+	ContextWindow int64            `json:"contextWindow"`
+	Messages      []SessionMessage `json:"messages,omitempty"`
+}
+
 type data struct {
-	ProxyURL   string       `json:"proxyUrl"`
-	ProxySetAt time.Time    `json:"proxySetAt"`
-	Users      []User       `json:"users"`
-	Usage      []UsageEvent `json:"usage"`
+	ProxyURL   string          `json:"proxyUrl"`
+	ProxySetAt time.Time       `json:"proxySetAt"`
+	Users      []User          `json:"users"`
+	Usage      []UsageEvent    `json:"usage"`
+	Sessions   []SessionRecord `json:"sessions,omitempty"`
 }
 
 // Store is the shared directory. One file is enough on a single machine.
@@ -83,16 +105,17 @@ func OpenConfigured(path, redisURL string) (*Store, error) {
 
 // PublicUser is the view returned to clients. It has no token hash.
 type PublicUser struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	ForcedModel string    `json:"forcedModel"`
-	Forced      bool      `json:"forced"`
-	Model       string    `json:"model"`
-	TokenLimit  int64     `json:"tokenLimit"`
-	TokensUsed  int64     `json:"tokensUsed"`
-	ResetEvery  string    `json:"resetEvery"`
-	PeriodStart time.Time `json:"periodStart"`
-	ResetAt     time.Time `json:"resetAt"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	ForcedModel   string    `json:"forcedModel"`
+	Forced        bool      `json:"forced"`
+	Model         string    `json:"model"`
+	ContextWindow int64     `json:"contextWindow"`
+	TokenLimit    int64     `json:"tokenLimit"`
+	TokensUsed    int64     `json:"tokensUsed"`
+	ResetEvery    string    `json:"resetEvery"`
+	PeriodStart   time.Time `json:"periodStart"`
+	ResetAt       time.Time `json:"resetAt"`
 }
 
 // Public projects a user at the given time, rolling the period when it has ended.
@@ -100,16 +123,30 @@ func Public(u User, requested string, now time.Time) PublicUser {
 	u = rolled(u, now)
 	model, forced := ResolveModel(u.ForcedModel, requested)
 	return PublicUser{
-		ID:          u.ID,
-		Name:        u.Name,
-		ForcedModel: u.ForcedModel,
-		Forced:      forced,
-		Model:       model,
-		TokenLimit:  u.TokenLimit,
-		TokensUsed:  u.TokensUsed,
-		ResetEvery:  u.ResetEvery,
-		PeriodStart: u.PeriodStart,
-		ResetAt:     NextReset(u.PeriodStart, u.ResetEvery),
+		ID:            u.ID,
+		Name:          u.Name,
+		ForcedModel:   u.ForcedModel,
+		Forced:        forced,
+		Model:         model,
+		ContextWindow: ContextWindow(model),
+		TokenLimit:    u.TokenLimit,
+		TokensUsed:    u.TokensUsed,
+		ResetEvery:    u.ResetEvery,
+		PeriodStart:   u.PeriodStart,
+		ResetAt:       NextReset(u.PeriodStart, u.ResetEvery),
+	}
+}
+
+// ContextWindow returns the default context window size in tokens for a model.
+func ContextWindow(model string) int64 {
+	m := strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.Contains(m, "claude"):
+		return 200000
+	case strings.Contains(m, "gpt"), strings.Contains(m, "openai"), strings.Contains(m, "codex"):
+		return 200000
+	default:
+		return 500000
 	}
 }
 
@@ -486,6 +523,169 @@ func (s *Store) ProxySettings() (string, time.Time, error) {
 		return nil
 	})
 	return url, at, err
+}
+
+const maxSessionsPerUser = 50
+
+// SessionTitle builds a short human-readable title from the first prompt.
+func SessionTitle(prompt string) string {
+	s := strings.TrimSpace(prompt)
+	if idx := strings.IndexAny(s, "\r\n"); idx >= 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	if s == "" {
+		return "New session"
+	}
+	runes := []rune(s)
+	if len(runes) > 48 {
+		return strings.TrimSpace(string(runes[:47])) + "…"
+	}
+	return s
+}
+
+// SaveSession inserts or updates a session record.
+func (s *Store) SaveSession(rec SessionRecord) error {
+	if strings.TrimSpace(rec.ID) == "" || strings.TrimSpace(rec.UserID) == "" {
+		return ErrBadInput
+	}
+	if strings.TrimSpace(rec.Title) == "" {
+		rec.Title = "New session"
+	}
+	if rec.ContextWindow <= 0 {
+		rec.ContextWindow = ContextWindow(rec.Model)
+	}
+	return s.with(func(d *data) error {
+		for i := range d.Sessions {
+			if d.Sessions[i].ID == rec.ID {
+				if d.Sessions[i].UserID != rec.UserID {
+					return ErrUnauthorized
+				}
+				if len(rec.Messages) == 0 && len(d.Sessions[i].Messages) > 0 {
+					rec.Messages = d.Sessions[i].Messages
+				}
+				if rec.Title == "New session" && d.Sessions[i].Title != "" && d.Sessions[i].Title != "New session" {
+					rec.Title = d.Sessions[i].Title
+				}
+				d.Sessions[i] = rec
+				return nil
+			}
+		}
+		d.Sessions = append(d.Sessions, rec)
+		trimUserSessions(d, rec.UserID)
+		return nil
+	})
+}
+
+// AppendSessionTurn records a user prompt and agent reply in the session history.
+func (s *Store) AppendSessionTurn(sessionID, userID, prompt, reply string, tokens int64, now time.Time) (SessionRecord, error) {
+	var out SessionRecord
+	err := s.with(func(d *data) error {
+		idx := -1
+		for i := range d.Sessions {
+			if d.Sessions[i].ID == sessionID {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return ErrNotFound
+		}
+		rec := d.Sessions[idx]
+		if rec.UserID != userID {
+			return ErrUnauthorized
+		}
+		trimmedPrompt := strings.TrimSpace(prompt)
+		if (rec.Title == "" || rec.Title == "New session") && trimmedPrompt != "" {
+			rec.Title = SessionTitle(trimmedPrompt)
+		}
+		if trimmedPrompt != "" {
+			rec.Messages = append(rec.Messages, SessionMessage{
+				Role: "you",
+				Text: trimmedPrompt,
+				At:   now,
+			})
+		}
+		if strings.TrimSpace(reply) != "" {
+			rec.Messages = append(rec.Messages, SessionMessage{
+				Role: "agent",
+				Text: reply,
+				At:   now,
+			})
+		}
+		if tokens > 0 {
+			rec.TokensUsed += tokens
+		}
+		rec.UpdatedAt = now
+		d.Sessions[idx] = rec
+		out = rec
+		return nil
+	})
+	return out, err
+}
+
+// ListSessions returns saved sessions for userID, newest first, without full message bodies.
+func (s *Store) ListSessions(userID string) ([]SessionRecord, error) {
+	var out []SessionRecord
+	err := s.with(func(d *data) error {
+		for i := len(d.Sessions) - 1; i >= 0; i-- {
+			rec := d.Sessions[i]
+			if rec.UserID != userID {
+				continue
+			}
+			summary := rec
+			summary.Messages = nil
+			out = append(out, summary)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// GetSession returns one session with its full message history.
+func (s *Store) GetSession(sessionID, userID string) (SessionRecord, error) {
+	var out SessionRecord
+	err := s.with(func(d *data) error {
+		for i := range d.Sessions {
+			if d.Sessions[i].ID == sessionID {
+				if d.Sessions[i].UserID != userID {
+					return ErrUnauthorized
+				}
+				out = d.Sessions[i]
+				out.Messages = append([]SessionMessage(nil), d.Sessions[i].Messages...)
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
+	return out, err
+}
+
+// DeleteSession deletes a user's saved session.
+func (s *Store) DeleteSession(sessionID, userID string) error {
+	return s.with(func(d *data) error {
+		for i := range d.Sessions {
+			if d.Sessions[i].ID == sessionID {
+				if d.Sessions[i].UserID != userID {
+					return ErrUnauthorized
+				}
+				d.Sessions = append(d.Sessions[:i], d.Sessions[i+1:]...)
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
+}
+
+func trimUserSessions(d *data, userID string) {
+	count := 0
+	for i := len(d.Sessions) - 1; i >= 0; i-- {
+		if d.Sessions[i].UserID == userID {
+			count++
+			if count > maxSessionsPerUser {
+				d.Sessions = append(d.Sessions[:i], d.Sessions[i+1:]...)
+			}
+		}
+	}
 }
 
 func (s *Store) with(fn func(*data) error) error {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,12 +48,14 @@ type Server struct {
 }
 
 type session struct {
-	id       string
-	userID   string
-	model    string
-	dir      string
-	mu       sync.Mutex
-	baseline map[string]string
+	id         string
+	userID     string
+	model      string
+	workspace  string
+	dir        string
+	mu         sync.Mutex
+	baseline   map[string]string
+	lastPrompt string
 }
 
 // New builds the gateway handler.
@@ -77,8 +80,12 @@ func New(opt Options) *Server {
 	})
 	s.mux.Handle("GET /metrics", metrics.Handler())
 	s.mux.HandleFunc("GET /v1/me", s.me)
+	s.mux.HandleFunc("GET /v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /v1/sessions", s.createSession)
+	s.mux.HandleFunc("GET /v1/sessions/{sessionId}", s.getSession)
+	s.mux.HandleFunc("DELETE /v1/sessions/{sessionId}", s.deleteSession)
 	s.mux.HandleFunc("PUT /v1/sessions/{sessionId}/files", s.putFiles)
+	s.mux.HandleFunc("PATCH /v1/sessions/{sessionId}/files", s.patchFiles)
 	s.mux.HandleFunc("GET /v1/sessions/{sessionId}/changes", s.changes)
 	s.mux.HandleFunc("GET /ws/{sessionId}", s.socket)
 	return s
@@ -98,11 +105,80 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeAuth(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, store.Public(user, "", s.opt.Now()))
+	httpx.WriteJSON(w, http.StatusOK, store.Public(user, r.URL.Query().Get("model"), s.opt.Now()))
+}
+
+func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
+	user, err := s.opt.Store.Authenticate(httpx.Bearer(r), s.opt.Now())
+	if err != nil {
+		writeAuth(w, err)
+		return
+	}
+	sessions, err := s.opt.Store.ListSessions(user.ID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"sessions": sessions,
+	})
+}
+
+func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
+	user, err := s.opt.Store.Authenticate(httpx.Bearer(r), s.opt.Now())
+	if err != nil {
+		writeAuth(w, err)
+		return
+	}
+	id := r.PathValue("sessionId")
+	rec, err := s.opt.Store.GetSession(id, user.ID)
+	if err != nil {
+		writeAuth(w, err)
+		return
+	}
+	s.mu.Lock()
+	_, exists := s.sessions[id]
+	s.mu.Unlock()
+	if !exists {
+		if dir, err := worktree.Prepare(s.opt.WorkRoot, user.ID, rec.Workspace); err == nil {
+			s.mu.Lock()
+			if _, ok := s.sessions[id]; !ok {
+				s.sessions[id] = &session{
+					id:        id,
+					userID:    user.ID,
+					model:     rec.Model,
+					workspace: rec.Workspace,
+					dir:       dir,
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, rec)
+}
+
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	user, err := s.opt.Store.Authenticate(httpx.Bearer(r), s.opt.Now())
+	if err != nil {
+		writeAuth(w, err)
+		return
+	}
+	id := r.PathValue("sessionId")
+	if err := s.opt.Store.DeleteSession(id, user.ID); err != nil {
+		writeAuth(w, err)
+		return
+	}
+	s.mu.Lock()
+	delete(s.sessions, id)
+	n := len(s.sessions)
+	s.mu.Unlock()
+	metrics.Sessions.Set(float64(n))
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
-	user, err := s.opt.Store.Authenticate(httpx.Bearer(r), s.opt.Now())
+	now := s.opt.Now()
+	user, err := s.opt.Store.Authenticate(httpx.Bearer(r), now)
 	if err != nil {
 		writeAuth(w, err)
 		return
@@ -113,7 +189,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_json"})
 		return
 	}
-	if _, err := s.opt.Store.CheckQuota(user.ID, s.opt.Now()); err != nil {
+	if _, err := s.opt.Store.CheckQuota(user.ID, now); err != nil {
 		if errors.Is(err, store.ErrQuota) {
 			metrics.QuotaDenied.Inc()
 		}
@@ -127,24 +203,37 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := &session{
-		id:     newSessionID(),
-		userID: user.ID,
-		model:  model,
-		dir:    dir,
+		id:        newSessionID(),
+		userID:    user.ID,
+		model:     model,
+		workspace: req.Workspace,
+		dir:       dir,
 	}
 	s.mu.Lock()
 	s.sessions[sess.id] = sess
 	n := len(s.sessions)
 	s.mu.Unlock()
 	metrics.Sessions.Set(float64(n))
-	view := store.Public(user, req.Model, s.opt.Now())
+	view := store.Public(user, req.Model, now)
+	_ = s.opt.Store.SaveSession(store.SessionRecord{
+		ID:            sess.id,
+		UserID:        user.ID,
+		Title:         "New session",
+		Workspace:     req.Workspace,
+		Model:         view.Model,
+		CreatedAt:     now.UTC(),
+		UpdatedAt:     now.UTC(),
+		ContextWindow: view.ContextWindow,
+	})
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"sessionId":  sess.id,
-		"model":      view.Model,
-		"forced":     view.Forced,
-		"tokenLimit": view.TokenLimit,
-		"tokensUsed": view.TokensUsed,
-		"resetAt":    view.ResetAt,
+		"sessionId":     sess.id,
+		"title":         "New session",
+		"model":         view.Model,
+		"forced":        view.Forced,
+		"tokenLimit":    view.TokenLimit,
+		"tokensUsed":    view.TokensUsed,
+		"contextWindow": view.ContextWindow,
+		"resetAt":       view.ResetAt,
 	})
 }
 
@@ -169,6 +258,39 @@ func (s *Server) putFiles(w http.ResponseWriter, r *http.Request) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if err := filesync.Replace(sess.dir, req.Files); err != nil {
+		writeSync(w, err)
+		return
+	}
+	base, err := filesync.HashTree(sess.dir)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	sess.baseline = base
+	httpx.WriteJSON(w, http.StatusOK, map[string]int{"files": len(req.Files)})
+}
+
+func (s *Server) patchFiles(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.openSession(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, filesync.MaxTotalBytes+(1<<20))
+	var req struct {
+		Files []filesync.File `json:"files"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeSync(w, filesync.ErrTooLarge)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_json"})
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if err := filesync.Apply(sess.dir, req.Files); err != nil {
 		writeSync(w, err)
 		return
 	}
@@ -290,6 +412,11 @@ func (s *Server) clientToAgent(ctx context.Context, conn *websocket.Conn, agent 
 				_ = conn.WriteMessage(websocket.TextMessage, rpcError(in.ID, -32001, "Лимит токенов исчерпан"))
 				continue
 			}
+			if p := extractPromptText(msg); p != "" {
+				sess.mu.Lock()
+				sess.lastPrompt = p
+				sess.mu.Unlock()
+			}
 		}
 		if err := agent.Send(ctx, msg); err != nil {
 			return err
@@ -298,16 +425,35 @@ func (s *Server) clientToAgent(ctx context.Context, conn *websocket.Conn, agent 
 }
 
 func (s *Server) agentToClient(ctx context.Context, conn *websocket.Conn, agent backend.Agent, sess *session) error {
+	var streamBuf strings.Builder
 	for {
 		msg, err := agent.Recv(ctx)
 		if err != nil {
 			return err
 		}
-		if n := usageOf(msg); n > 0 {
+		if chunk := extractStreamChunk(msg); chunk != "" {
+			streamBuf.WriteString(chunk)
+		}
+		n := usageOf(msg)
+		if n > 0 {
 			if _, err := s.opt.Store.AddUsage(sess.userID, n, sess.model, s.opt.Now()); err == nil {
 				metrics.Tokens.WithLabelValues(sess.model).Add(float64(n))
 			} else if errors.Is(err, store.ErrQuota) {
 				metrics.QuotaDenied.Inc()
+			}
+		}
+		if isTurnResponse(msg) {
+			sess.mu.Lock()
+			prompt := sess.lastPrompt
+			sess.lastPrompt = ""
+			sess.mu.Unlock()
+			if prompt != "" {
+				reply := extractReplyText(msg)
+				if reply == "" {
+					reply = streamBuf.String()
+				}
+				streamBuf.Reset()
+				_, _ = s.opt.Store.AppendSessionTurn(sess.id, sess.userID, prompt, reply, n, s.opt.Now())
 			}
 		}
 		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -329,6 +475,74 @@ func isPrompt(msg []byte) bool {
 	default:
 		return false
 	}
+}
+
+func extractPromptText(msg []byte) string {
+	var in struct {
+		Params struct {
+			Text   string `json:"text"`
+			Prompt []struct {
+				Text string `json:"text"`
+			} `json:"prompt"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(in.Params.Text) != "" {
+		return strings.TrimSpace(in.Params.Text)
+	}
+	var parts []string
+	for _, p := range in.Params.Prompt {
+		if strings.TrimSpace(p.Text) != "" {
+			parts = append(parts, strings.TrimSpace(p.Text))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func extractStreamChunk(msg []byte) string {
+	var in struct {
+		Method string `json:"method"`
+		Params struct {
+			Update struct {
+				SessionUpdate string `json:"sessionUpdate"`
+				Content       struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return ""
+	}
+	if in.Method == "session/update" && in.Params.Update.SessionUpdate == "agent_message_chunk" {
+		return in.Params.Update.Content.Text
+	}
+	return ""
+}
+
+func isTurnResponse(msg []byte) bool {
+	var in struct {
+		Method string          `json:"method"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return false
+	}
+	return in.Method == "" && len(in.Result) > 0 && string(in.Result) != "null"
+}
+
+func extractReplyText(msg []byte) string {
+	var body struct {
+		Result struct {
+			Text string `json:"text"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(msg, &body); err != nil {
+		return ""
+	}
+	return body.Result.Text
 }
 
 func usageOf(msg []byte) int64 {

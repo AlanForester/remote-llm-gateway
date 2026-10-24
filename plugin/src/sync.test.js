@@ -21,3 +21,23 @@ test("binary file is base64 and planApply restores it", () => {
 test("planApply rejects a parent path", () => {
   assert.throws(() => sync.planApply([{ path: "../x", content: "a" }]), /запрещ/);
 });
+
+test("diffSnapshot computes modified and deleted files", () => {
+  const base = sync.hashSnapshot([
+    { path: "a.js", content: "1" },
+    { path: "b.js", content: "2" },
+  ]);
+  const { patch } = sync.diffSnapshot(base, [
+    { path: "a.js", content: "1" },
+    { path: "b.js", content: "changed" },
+    { path: "c.js", content: "new" },
+  ]);
+  assert.equal(patch.length, 2);
+  assert.deepEqual(
+    patch.map((f) => f.path).sort(),
+    ["b.js", "c.js"]
+  );
+  const { patch: patchDel } = sync.diffSnapshot(base, [{ path: "a.js", content: "1" }]);
+  assert.deepEqual(patchDel, [{ path: "b.js", deleted: true }]);
+});
+

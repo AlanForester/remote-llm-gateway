@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 // Helpers for the project snapshot the plugin sends to the gateway.
 // Limits match internal/filesync.
 
@@ -62,6 +64,46 @@ function planApply(files) {
   return { writes, deletes };
 }
 
+function fileHash(file) {
+  return crypto
+    .createHash("sha256")
+    .update(String(file.encoding || "utf8") + ":" + String(file.content || ""))
+    .digest("hex");
+}
+
+function hashSnapshot(files) {
+  const map = new Map();
+  for (const file of files || []) {
+    if (file && file.path && !file.deleted) {
+      map.set(file.path, fileHash(file));
+    }
+  }
+  return map;
+}
+
+function diffSnapshot(prevMap, nextFiles) {
+  const nextMap = new Map();
+  const patch = [];
+  for (const file of nextFiles || []) {
+    if (!file || !file.path) {
+      continue;
+    }
+    const h = fileHash(file);
+    nextMap.set(file.path, h);
+    if (!prevMap || prevMap.get(file.path) !== h) {
+      patch.push(file);
+    }
+  }
+  if (prevMap) {
+    for (const oldPath of prevMap.keys()) {
+      if (!nextMap.has(oldPath)) {
+        patch.push({ path: oldPath, deleted: true });
+      }
+    }
+  }
+  return { patch, nextMap };
+}
+
 module.exports = {
   MAX_FILE_BYTES,
   MAX_FILES,
@@ -69,4 +111,6 @@ module.exports = {
   safeRelative,
   fileFromBuffer,
   planApply,
+  hashSnapshot,
+  diffSnapshot,
 };

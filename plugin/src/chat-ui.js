@@ -66,6 +66,24 @@ function formatTokens(value) {
   return (millions % 1 === 0 ? String(millions.toFixed(0)) : String(millions)) + "M";
 }
 
+function defaultContextWindow(model) {
+  const name = String(model || "").toLowerCase();
+  if (name.includes("claude") || name.includes("gpt") || name.includes("codex") || name.includes("openai")) {
+    return 200000;
+  }
+  return 500000;
+}
+
+function formatUsage(used, size) {
+  const u = Number(used) || 0;
+  const s = Number(size) || 0;
+  if (s > 0) {
+    const left = u > 0 ? formatTokens(u) : "0K";
+    return left + "/" + formatTokens(s);
+  }
+  return formatTokens(u) + "/—";
+}
+
 function toolBucket(kind, title) {
   const name = String(kind || "").toLowerCase();
   const label = String(title || "").toLowerCase();
@@ -106,23 +124,45 @@ function clockLabel() {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-const modelNames = { grok: "Grok", claude: "Claude", gpt: "GPT" };
+function shortTitle(prompt) {
+  const first = String(prompt || "")
+    .trim()
+    .split(/\r?\n/)[0]
+    .trim();
+  if (!first) {
+    return "New session";
+  }
+  return first.length > 48 ? first.slice(0, 48) + "…" : first;
+}
+
+const modelNames = { grok: "Grok 4.6", claude: "Claude Code", gpt: "Codex" };
+const modelPlaceholders = { grok: "Ask Grok...", claude: "Ask Claude...", gpt: "Ask Codex..." };
 const effortNames = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high" };
 
 function boot() {
   const vscode = acquireVsCodeApi();
   const log = document.getElementById("log");
+  const welcome = document.getElementById("welcome");
+  const sessionTitle = document.getElementById("session-title");
   const text = document.getElementById("text");
   const send = document.getElementById("send");
+  const sendIcon = document.getElementById("send-icon");
+  const stopIcon = document.getElementById("stop-icon");
   const modelBtn = document.getElementById("model");
   const effortBtn = document.getElementById("effort");
   const autoBtn = document.getElementById("auto");
   const usage = document.getElementById("usage");
   const jump = document.getElementById("jump");
+  const activeFileBtn = document.getElementById("active-file");
+  const activeFileNameEl = document.getElementById("active-file-name");
+  const historyList = document.getElementById("history-list");
+  const remoteBtn = document.getElementById("remote-btn");
   const menus = {
     plus: document.getElementById("plus-menu"),
     model: document.getElementById("model-menu"),
     effort: document.getElementById("effort-menu"),
+    history: document.getElementById("history-menu"),
+    more: document.getElementById("more-menu"),
   };
   const tools = new Map();
   let thoughtEl = null;
@@ -135,39 +175,80 @@ function boot() {
   let modelLocked = false;
   let autoAccept = true;
   let recognition = null;
+  let isBusy = false;
+  let usedTokens = 0;
+  let contextSize = defaultContextWindow("grok");
+  let activeFilePath = "";
+  let includeActiveFile = true;
+
+  function syncStage() {
+    const hasMessages = log.children.length > 0;
+    if (welcome) {
+      welcome.hidden = hasMessages;
+    }
+    log.hidden = !hasMessages;
+  }
 
   function scrollIfPinned() {
+    syncStage();
     const gap = log.scrollHeight - log.scrollTop - log.clientHeight;
     if (gap < 80) {
       log.scrollTop = log.scrollHeight;
     }
-    jump.hidden = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+    jump.hidden = log.hidden || log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   }
 
   function closeMenus() {
     for (const menu of Object.values(menus)) {
-      menu.hidden = true;
+      if (menu) {
+        menu.hidden = true;
+      }
     }
   }
 
   function toggleMenu(name) {
-    const open = menus[name].hidden;
+    const target = menus[name];
+    if (!target) {
+      return;
+    }
+    const open = target.hidden;
     closeMenus();
-    menus[name].hidden = !open;
+    target.hidden = !open;
   }
 
   function chip(button, label) {
+    if (!button) {
+      return;
+    }
     const icon = button.querySelector("svg");
-    button.textContent = label + " ";
     if (icon) {
+      button.textContent = label + " ";
       button.appendChild(icon);
+    } else {
+      button.textContent = label;
+    }
+  }
+
+  function syncSendState() {
+    if (isBusy) {
+      send.disabled = false;
+      send.classList.add("stopping");
+      if (sendIcon) sendIcon.hidden = true;
+      if (stopIcon) stopIcon.hidden = false;
+      send.setAttribute("aria-label", "Остановить");
+    } else {
+      send.classList.remove("stopping");
+      if (sendIcon) sendIcon.hidden = false;
+      if (stopIcon) stopIcon.hidden = true;
+      send.disabled = !text.value.trim();
+      send.setAttribute("aria-label", "Отправить");
     }
   }
 
   function resize() {
     text.style.height = "auto";
     text.style.height = Math.min(text.scrollHeight, 160) + "px";
-    send.disabled = !text.value.trim();
+    syncSendState();
   }
 
   function resetTurn() {
@@ -179,10 +260,46 @@ function boot() {
     tools.clear();
   }
 
+  function applyModelUI(nextModel, nextWindow) {
+    model = nextModel || "grok";
+    chip(modelBtn, modelNames[model] || model);
+    text.placeholder = modelPlaceholders[model] || "Ask " + (modelNames[model] || model) + "...";
+    contextSize = Number(nextWindow) > 0 ? Number(nextWindow) : defaultContextWindow(model);
+    setUsage(usedTokens, contextSize);
+    if (menus.model) {
+      for (const button of menus.model.querySelectorAll("button")) {
+        button.hidden = modelLocked && button.dataset.model !== model;
+        button.setAttribute("aria-checked", button.dataset.model === model ? "true" : "false");
+      }
+    }
+  }
+
+  function setActiveFile(relPath, baseName) {
+    activeFilePath = String(relPath || "");
+    const label = String(baseName || relPath || "");
+    if (!activeFileBtn || !activeFileNameEl) {
+      return;
+    }
+    if (!label) {
+      activeFileBtn.hidden = true;
+      activeFileNameEl.textContent = "";
+      return;
+    }
+    activeFileNameEl.textContent = label;
+    activeFileBtn.hidden = false;
+    activeFileBtn.classList.toggle("off", !includeActiveFile);
+    activeFileBtn.title = includeActiveFile
+      ? "Active file included: " + activeFilePath + " (click to exclude)"
+      : "Active file excluded: " + activeFilePath + " (click to include)";
+  }
+
   function add(kind, value) {
     const line = document.createElement("div");
     line.className = kind === "you" || kind === "agent" ? "msg " + kind : kind;
     if (kind === "you") {
+      if (sessionTitle && sessionTitle.textContent === "New session" && value) {
+        sessionTitle.textContent = shortTitle(value);
+      }
       const bubble = document.createElement("div");
       bubble.className = "bubble";
       bubble.textContent = value || "";
@@ -235,6 +352,7 @@ function boot() {
     meta.textContent = clockLabel();
     wrap.append(agentEl, meta);
     log.appendChild(wrap);
+    syncStage();
   }
 
   function noteTool(msg) {
@@ -270,13 +388,47 @@ function boot() {
   }
 
   function setUsage(used, size) {
+    usedTokens = Number(used) || 0;
+    const total = Number(size) > 0 ? Number(size) : contextSize;
     const ring = document.getElementById("donut");
     const length = 2 * Math.PI * 5.5;
-    const frac = size > 0 ? Math.max(0, Math.min(1, used / size)) : 0;
+    const frac = total > 0 ? Math.max(0, Math.min(1, usedTokens / total)) : 0;
     if (ring) {
       ring.setAttribute("stroke-dasharray", (frac * length).toFixed(2) + " " + length.toFixed(2));
     }
-    usage.textContent = size > 0 ? formatTokens(used) + "/" + formatTokens(size) : formatTokens(used) + "/—";
+    usage.textContent = formatUsage(usedTokens, total);
+  }
+
+  function renderHistoryList(items) {
+    if (!historyList) {
+      return;
+    }
+    historyList.textContent = "";
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "menu-empty";
+      empty.textContent = "No saved sessions";
+      historyList.appendChild(empty);
+      return;
+    }
+    for (const item of list) {
+      const row = document.createElement("div");
+      row.className = "history-row";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "history-item";
+      btn.dataset.sessionId = item.id || "";
+      btn.textContent = item.title || "New session";
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "history-del";
+      del.dataset.deleteId = item.id || "";
+      del.title = "Delete session";
+      del.textContent = "×";
+      row.append(btn, del);
+      historyList.appendChild(row);
+    }
   }
 
   function showPermission(msg) {
@@ -304,7 +456,7 @@ function boot() {
 
   function renderActivity(msg) {
     if (msg.phase === "usage") {
-      setUsage(Number(msg.used) || 0, Number(msg.size) || 0);
+      setUsage(Number(msg.used) || 0, Number(msg.size) || contextSize);
       return;
     }
     if (msg.phase === "done") {
@@ -313,7 +465,8 @@ function boot() {
         wait.remove();
       }
       resetTurn();
-      send.disabled = !text.value.trim();
+      isBusy = false;
+      syncSendState();
       return;
     }
     if (msg.phase === "wait") {
@@ -365,9 +518,97 @@ function boot() {
       toggleMenu("model");
     }
   });
-  effortBtn.addEventListener("click", () => toggleMenu("effort"));
+  if (effortBtn) {
+    effortBtn.addEventListener("click", () => toggleMenu("effort"));
+  }
+  if (remoteBtn) {
+    remoteBtn.addEventListener("click", () => {
+      closeMenus();
+      vscode.postMessage({ type: "showModel" });
+    });
+  }
+  const historyBtn = document.getElementById("history-btn");
+  if (historyBtn) {
+    historyBtn.addEventListener("click", () => {
+      const opening = menus.history && menus.history.hidden;
+      toggleMenu("history");
+      if (opening) {
+        vscode.postMessage({ type: "history" });
+      }
+    });
+  }
+  const newBtn = document.getElementById("new-btn");
+  if (newBtn) {
+    newBtn.addEventListener("click", () => {
+      closeMenus();
+      vscode.postMessage({ type: "new" });
+    });
+  }
+  const moreBtn = document.getElementById("more-btn");
+  if (moreBtn) {
+    moreBtn.addEventListener("click", () => toggleMenu("more"));
+  }
+  const tipClose = document.getElementById("tip-close");
+  if (tipClose) {
+    tipClose.addEventListener("click", () => {
+      const banner = document.getElementById("tip-banner");
+      if (banner) {
+        banner.hidden = true;
+      }
+    });
+  }
+  const connectAgents = document.getElementById("connect-agents");
+  if (connectAgents) {
+    connectAgents.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!modelLocked) {
+        toggleMenu("model");
+      } else {
+        vscode.postMessage({ type: "showModel" });
+      }
+    });
+  }
+  if (activeFileBtn) {
+    activeFileBtn.addEventListener("click", () => {
+      includeActiveFile = !includeActiveFile;
+      setActiveFile(activeFilePath, activeFileNameEl ? activeFileNameEl.textContent : "");
+    });
+  }
+  if (menus.history) {
+    menus.history.addEventListener("click", (event) => {
+      const delBtn = event.target && event.target.closest && event.target.closest("[data-delete-id]");
+      if (delBtn && delBtn.dataset.deleteId) {
+        event.stopPropagation();
+        vscode.postMessage({ type: "deleteSession", sessionId: delBtn.dataset.deleteId });
+        return;
+      }
+      const itemBtn = event.target && event.target.closest && event.target.closest("[data-session-id]");
+      if (itemBtn && itemBtn.dataset.sessionId) {
+        closeMenus();
+        vscode.postMessage({ type: "loadSession", sessionId: itemBtn.dataset.sessionId });
+      }
+    });
+  }
+  if (menus.more) {
+    menus.more.addEventListener("click", (event) => {
+      const btn = event.target && event.target.closest && event.target.closest("[data-more]");
+      const act = btn && btn.dataset && btn.dataset.more;
+      if (!act) {
+        return;
+      }
+      closeMenus();
+      if (act === "token") {
+        vscode.postMessage({ type: "setToken" });
+      } else if (act === "quota") {
+        vscode.postMessage({ type: "showModel" });
+      } else if (act === "settings") {
+        vscode.postMessage({ type: "openSettings" });
+      }
+    });
+  }
   menus.plus.addEventListener("click", (event) => {
-    const act = event.target && event.target.dataset && event.target.dataset.act;
+    const btn = event.target && event.target.closest && event.target.closest("[data-act]");
+    const act = btn && btn.dataset && btn.dataset.act;
     if (!act) {
       return;
     }
@@ -376,23 +617,24 @@ function boot() {
       vscode.postMessage({ type: "new" });
     } else if (act === "file") {
       vscode.postMessage({ type: "attach" });
+    } else if (act === "active" && activeFileBtn) {
+      includeActiveFile = !includeActiveFile;
+      setActiveFile(activeFilePath, activeFileNameEl ? activeFileNameEl.textContent : "");
     }
   });
   menus.model.addEventListener("click", (event) => {
-    const next = event.target && event.target.dataset && event.target.dataset.model;
+    const btn = event.target && event.target.closest && event.target.closest("[data-model]");
+    const next = btn && btn.dataset && btn.dataset.model;
     if (!next || modelLocked) {
       return;
     }
-    model = next;
-    chip(modelBtn, modelNames[next] || next);
-    for (const button of menus.model.querySelectorAll("button")) {
-      button.setAttribute("aria-checked", button.dataset.model === next ? "true" : "false");
-    }
+    applyModelUI(next, defaultContextWindow(next));
     closeMenus();
     vscode.postMessage({ type: "model", model: next });
   });
   menus.effort.addEventListener("click", (event) => {
-    const next = event.target && event.target.dataset && event.target.dataset.effort;
+    const btn = event.target && event.target.closest && event.target.closest("[data-effort]");
+    const next = btn && btn.dataset && btn.dataset.effort;
     if (!next) {
       return;
     }
@@ -437,21 +679,33 @@ function boot() {
   });
   document.getElementById("composer").addEventListener("submit", (event) => {
     event.preventDefault();
+    if (isBusy) {
+      vscode.postMessage({ type: "cancel" });
+      return;
+    }
     const value = text.value.trim();
     if (!value || send.disabled) {
       return;
     }
     text.value = "";
+    isBusy = true;
     resize();
-    send.disabled = true;
     closeMenus();
-    vscode.postMessage({ type: "prompt", text: value, effort, autoAccept });
+    vscode.postMessage({
+      type: "prompt",
+      text: value,
+      effort,
+      autoAccept,
+      activeFile: includeActiveFile ? activeFilePath : "",
+    });
   });
   text.addEventListener("input", resize);
   text.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      document.getElementById("composer").requestSubmit();
+      if (!isBusy) {
+        document.getElementById("composer").requestSubmit();
+      }
     }
   });
   jump.addEventListener("click", () => {
@@ -459,10 +713,19 @@ function boot() {
     jump.hidden = true;
   });
   log.addEventListener("scroll", () => {
-    jump.hidden = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+    jump.hidden = log.hidden || log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   });
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".menu") && !event.target.closest("#plus") && !event.target.closest("#model") && !event.target.closest("#effort")) {
+    if (
+      !event.target.closest(".menu") &&
+      !event.target.closest(".top-menu") &&
+      !event.target.closest("#plus") &&
+      !event.target.closest("#model") &&
+      !event.target.closest("#effort") &&
+      !event.target.closest("#history-btn") &&
+      !event.target.closest("#more-btn") &&
+      !event.target.closest("#connect-agents")
+    ) {
       closeMenus();
     }
   });
@@ -471,11 +734,16 @@ function boot() {
     if (msg.type === "clear") {
       log.textContent = "";
       resetTurn();
-      setUsage(0, 0);
+      if (sessionTitle) {
+        sessionTitle.textContent = "New session";
+      }
+      setUsage(0, contextSize);
+      syncStage();
       return;
     }
     if (msg.type === "busy") {
-      send.disabled = !!msg.text || !text.value.trim();
+      isBusy = !!msg.text;
+      syncSendState();
       return;
     }
     if (msg.type === "activity") {
@@ -492,20 +760,48 @@ function boot() {
       text.focus();
       return;
     }
-    if (msg.type === "profile") {
-      model = msg.model || "grok";
-      modelLocked = !!(msg.forced || msg.locked);
-      chip(modelBtn, modelNames[model] || model);
-      modelBtn.disabled = modelLocked;
-      for (const button of menus.model.querySelectorAll("button")) {
-        button.hidden = modelLocked && button.dataset.model !== model;
-        button.setAttribute("aria-checked", button.dataset.model === model ? "true" : "false");
+    if (msg.type === "activeFile") {
+      setActiveFile(msg.path || "", msg.name || "");
+      return;
+    }
+    if (msg.type === "sessions") {
+      renderHistoryList(msg.sessions || []);
+      return;
+    }
+    if (msg.type === "restore") {
+      const s = msg.session || {};
+      log.textContent = "";
+      resetTurn();
+      if (sessionTitle) {
+        sessionTitle.textContent = s.title || "New session";
       }
+      if (s.model) {
+        applyModelUI(s.model, s.contextWindow);
+      }
+      setUsage(s.tokensUsed || 0, s.contextWindow || contextSize);
+      for (const item of s.messages || []) {
+        add(item.role === "user" ? "you" : "agent", item.text || "");
+      }
+      syncStage();
+      return;
+    }
+    if (msg.type === "profile") {
+      modelLocked = !!(msg.forced || msg.locked);
+      modelBtn.disabled = modelLocked;
+      if (remoteBtn && typeof msg.remote === "boolean") {
+        remoteBtn.classList.toggle("active", msg.remote);
+      }
+      if (msg.title && sessionTitle) {
+        sessionTitle.textContent = msg.title;
+      }
+      applyModelUI(msg.model || "grok", msg.contextWindow);
       return;
     }
     const kinds = ["you", "agent", "error", "file", "status"];
     add(kinds.indexOf(msg.type) >= 0 ? msg.type : "status", msg.text || "");
   });
+  applyModelUI(model, contextSize);
+  syncStage();
   resize();
 }
 
@@ -514,5 +810,14 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { formatTokens, renderMarkdown, summarizeTools, toolBucket };
+  module.exports = {
+    defaultContextWindow,
+    formatTokens,
+    formatUsage,
+    renderMarkdown,
+    shortTitle,
+    summarizeTools,
+    toolBucket,
+  };
 }
+

@@ -339,22 +339,28 @@ func normalizeEffort(value string) string {
 
 func promptText(params json.RawMessage) string {
 	var body struct {
-		Text   string `json:"text"`
-		Prompt []struct {
+		Text       string `json:"text"`
+		ActiveFile string `json:"activeFile"`
+		Prompt     []struct {
 			Text string `json:"text"`
 		} `json:"prompt"`
 	}
 	_ = json.Unmarshal(params, &body)
+	text := body.Text
 	if len(body.Prompt) > 0 {
 		var b strings.Builder
 		for _, block := range body.Prompt {
 			b.WriteString(block.Text)
 		}
 		if b.Len() > 0 {
-			return b.String()
+			text = b.String()
 		}
 	}
-	return body.Text
+	active := strings.TrimSpace(body.ActiveFile)
+	if active != "" && !strings.Contains(text, active) {
+		return "[Active file: " + active + "]\n\n" + text
+	}
+	return text
 }
 
 func headOf(msg []byte) (method, id string) {
