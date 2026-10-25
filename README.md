@@ -7,207 +7,209 @@
 
 # Remote LLM Gateway
 
-[![Лицензия: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![English](https://img.shields.io/badge/lang-EN-blue)](README.md)
+[![Русский](https://img.shields.io/badge/lang-RU-lightgrey)](README.ru.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml)
-[![Релиз](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
-[![Звезда на GitHub](https://img.shields.io/github/stars/AlanForester/remote-llm-gateway?style=social)](https://github.com/AlanForester/remote-llm-gateway/stargazers)
+[![Release](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
+[![Star on GitHub](https://img.shields.io/github/stars/AlanForester/remote-llm-gateway?style=social)](https://github.com/AlanForester/remote-llm-gateway/stargazers)
 
-Поддержите проект — поставьте [звезду на GitHub](https://github.com/AlanForester/remote-llm-gateway/stargazers).
+Support the project — [star it on GitHub](https://github.com/AlanForester/remote-llm-gateway/stargazers).
 
-> **Remote LLM Gateway** — один шлюз для Grok Build, Claude Code и GPT. Плагин в VS Code и Cursor и CLI `remote-llm` работают с локальным проектом, а агенты, инструменты и MCP выполняются на сервере. Проект не связан с xAI, Anthropic, OpenAI и Meta и не представляет их. Имена *Grok*, *Grok Build*, *Claude Code*, *Codex* и *Muse Code* используются только чтобы обозначить совместимость.
+> **Remote LLM Gateway** is one gateway for Grok Build, Claude Code, and GPT. The VS Code and Cursor plugin and the `remote-llm` CLI work with the local project, while the agents, tools, and MCP run on the server. This project is not affiliated with or endorsed by xAI, Anthropic, OpenAI, or Meta. The names *Grok*, *Grok Build*, *Claude Code*, *Codex*, and *Muse Code* are used only to describe compatibility.
 
-Три входа в один и тот же шлюз:
+Three ways into the same gateway:
 
-| | **Плагин** | **CLI `remote-llm`** | **Админка** |
+| | **Plugin** | **CLI `remote-llm`** | **Admin** |
 |---|---|---|---|
-| **Что это** | Чат в боковой панели VS Code и Cursor | Консольный клиент, по ощущениям как `grok` или `claude` | Пользователи, токены, модели, лимиты, расход |
-| **Где лежит** | `plugin/` | `cmd/remote-llm/` | `admin/` |
-| **Когда удобно** | Проект уже открыт в редакторе | Нужна консоль, редактор не нужен | Нужно назначить модель, прокси и доступ |
+| **What it is** | A chat in the VS Code and Cursor sidebar | A terminal client that feels like `grok` or `claude` | Users, tokens, models, limits, and usage |
+| **Where it lives** | `plugin/` | `cmd/remote-llm/` | `admin/` |
+| **When it fits** | The project is already open in the editor | You want a terminal and do not need the editor | You need to assign a model, a proxy, and access |
 
-Плагин и CLI подключаются к шлюзу по WebSocket и говорят с ним на ACP (JSON-RPC). К API моделей они не ходят. Шлюз на сервере поднимает агента в отдельном каталоге этой сессии. Подписка одна, ключи лежат на шлюзе.
+The plugin and the CLI connect to the gateway over WebSocket and speak ACP (JSON-RPC). They do not call model APIs themselves. On the server the gateway starts an agent in a directory that belongs to that session. One subscription, and the keys stay on the gateway.
 
-Регистрацию в Claude, например, и у остальных таких сервисов проходят на том же сервере, где стоит шлюз. Вход и работа идут с одного адреса.
+Sign in to Claude and the other provider CLIs on the same server that runs the gateway. Login and later use share that one address.
 
 ---
 
-## Зачем это
+## Why
 
-Тяжёлый CLI не стоит на каждой машине. Люди открывают свой проект локально, а Grok Build, Claude Code и GPT работают на одном сервере. Администратор видит расход, назначает человеку модель и выход в интернет и ставит лимит токенов на период.
+The heavy CLI does not have to sit on every machine. People open their project locally, while Grok Build, Claude Code, and GPT run on one server. An administrator sees usage, assigns a person a model and outbound internet access, and sets a token limit for a period.
 
-### Возможности
+### Features
 
 <details>
-<summary><strong>Один шлюз и одна подписка</strong></summary>
+<summary><strong>One gateway, one subscription</strong></summary>
 
-Все пользователи подключаются к одному шлюзу. Ключи провайдеров на их компьютеры не раздаются. Сессия собирается из пользователя и проекта: `wss://<адрес-шлюза>/ws/{sessionId}`.
+Every user connects to the same gateway. Provider keys are not copied to their computers. A session is built from the user and the project: `wss://<gateway-address>/ws/{sessionId}`.
 
 </details>
 
 <details>
-<summary><strong>Плагин для VS Code и Cursor</strong></summary>
+<summary><strong>Plugin for VS Code and Cursor</strong></summary>
 
-Плагин **Remote LLM Gateway** показывает чат в правой боковой панели, рядом с Grok. Проект открыт локально: в начале сессии файлы уходят на шлюз, после ответа правки записываются обратно в редактор. Локальный процесс `grok` или `claude` он не запускает.
+The **Remote LLM Gateway** plugin shows a chat in the right sidebar, next to Grok. The project stays open locally: at the start of a session the files go to the gateway, and after the reply the edits are written back into the editor. The plugin does not start a local `grok` or `claude` process.
 
-Если в админке этому пользователю назначена LLM, плагин показывает её. Если назначения нет, модель выбирается в интерфейсе.
+If the admin has assigned an LLM to this user, the plugin shows that model. Without an assignment, the model is chosen in the UI.
 
-За основу интерфейса взят [GUI for Grok Build & Muse Code](https://github.com/phuryn/grok-build-vscode).
+The chat UI is based on [GUI for Grok Build & Muse Code](https://github.com/phuryn/grok-build-vscode).
 
 </details>
 
 <details>
 <summary><strong>CLI <code>remote-llm</code></strong></summary>
 
-`remote-llm` смотрит в тот же шлюз, что и плагин. Из каталога проекта он отправляет файлы на сервер и после ответа записывает правки обратно. Флаг `--no-sync` этого не делает. Короткое имя `llm` не используется: оно слишком общее.
+`remote-llm` talks to the same gateway as the plugin. From the project directory it sends files to the server and writes the edits back after the reply. `--no-sync` skips that. The short name `llm` is not used: it is too generic.
 
-Принудительная модель из админки отображается и здесь.
-
-</details>
-
-<details>
-<summary><strong>Админка</strong></summary>
-
-В админке пользователи, токены доступа, доступные модели и расход: запросы и токены. Там же исходящий прокси, принудительная LLM и лимит использования: сколько токенов можно потратить и через какой период счётчик сбрасывается.
-
-`api` пускает вызовы по пользовательским токенам. Сессии агентов принимает `gateway`.
+A forced model from the admin UI is shown here too.
 
 </details>
 
 <details>
-<summary><strong>Принудительная модель</strong></summary>
+<summary><strong>Admin</strong></summary>
 
-Администратор назначает пользователю LLM. Плагин и CLI показывают эту модель на экране. Без назначения человек выбирает модель сам.
+The admin UI covers users, access tokens, available models, and usage: requests and tokens. It also sets the outbound proxy, the forced LLM, and the usage limit: how many tokens can be spent and when the counter resets.
 
-</details>
-
-<details>
-<summary><strong>Лимит токенов</strong></summary>
-
-В админке у пользователя два поля: лимит токенов и период сброса. Период может быть сутками, неделей, месяцем или своим интервалом. Шлюз считает токены этого периода. После лимита новые запросы не проходят, пока период не закончится и счётчик не обнулится. Расход за прошлые периоды в аналитике остаётся.
+`api` accepts calls with user tokens. `gateway` accepts agent sessions.
 
 </details>
 
 <details>
-<summary><strong>Исходящий прокси</strong></summary>
+<summary><strong>Forced model</strong></summary>
 
-Запросы Grok Build, Claude Code и остальных агентов с сервера наружу идут через прокси. Адрес задаётся в админке и в `.env`. Смена любого из этих значений меняет выход, пересобирать сервис для этого не нужно.
-
-</details>
-
-<details>
-<summary><strong>Отдельный каталог на сессию</strong></summary>
-
-Файлы пользователя на шлюзе лежат в каталоге этой сессии. Путь проекта с клиента — только ключ каталога: шлюз не открывает по нему репозиторий на сервере. Команды агента выполняются в этом каталоге. Правки возвращаются в локальный проект.
+An administrator assigns an LLM to a user. The plugin and the CLI show that model on screen. Without an assignment, the person picks the model.
 
 </details>
 
 <details>
-<summary><strong>Несколько агентов</strong></summary>
+<summary><strong>Token limit</strong></summary>
 
-| Агент | Как запускается |
+Each user has two fields in the admin UI: a token limit and a reset period. The period can be a day, a week, a month, or a custom interval. The gateway counts tokens for that period. After the limit, new requests stop until the period ends and the counter resets. Usage from earlier periods stays in the analytics.
+
+</details>
+
+<details>
+<summary><strong>Outbound proxy</strong></summary>
+
+Requests from Grok Build, Claude Code, and the other agents leave the server through a proxy. The address is set in the admin UI and in `.env`. Changing either value changes the exit path, and the service does not need a rebuild.
+
+</details>
+
+<details>
+<summary><strong>A directory per session</strong></summary>
+
+A user's files on the gateway live in that session's directory. The project path from the client is only the directory key: the gateway does not open a repository on the server at that path. Agent commands run in this directory. Edits come back to the local project.
+
+</details>
+
+<details>
+<summary><strong>Several agents</strong></summary>
+
+| Agent | How it starts |
 |---|---|
-| Grok Build | `grok agent serve`, ACP через WebSocket |
+| Grok Build | `grok agent serve`, ACP over WebSocket |
 | Claude Code | `claude agent serve` |
-| GPT | OpenAI Responses API и tool calling в самом шлюзе. Ключ один, на сервере |
+| GPT | OpenAI Responses API and tool calling inside the gateway. One key, on the server |
 
-У GPT шлюз сам даёт инструменты: прочитать, записать и показать файлы сессии, выполнить команду в её каталоге. Дополнительные инструменты берутся из stdio MCP, список серверов лежит в `MCP_CONFIG`. Grok Build и Claude Code по-прежнему берут свои MCP-серверы из настройки на машине шлюза.
+For GPT the gateway supplies the tools itself: read, write, and show the session files, and run a command in the session directory. Extra tools come from stdio MCP, and the server list lives in `MCP_CONFIG`. Grok Build and Claude Code still take their MCP servers from the configuration on the gateway machine.
 
 </details>
 
 ---
 
-## Требования
+## Requirements
 
-- VS Code или Cursor для плагина. Для консоли достаточно `remote-llm`.
-- Сервер шлюза с установленными CLI тех агентов, которые вы включаете: `grok`, `claude`.
-- Одна подписка или один ключ провайдера на шлюзе.
-- Регистрация и вход в Claude и в остальные такие сервисы с того же сервера, где стоит шлюз.
-- Redis, когда шлюз, админка и API работают отдельными процессами или на нескольких машинах. Локальный `go run` без Redis хранит пользователей, лимиты и прокси в `DATA_FILE`. Сессии WebSocket в Redis не пишутся: это живой разговор, он не переживает рестарт процесса.
+- VS Code or Cursor for the plugin. The terminal only needs `remote-llm`.
+- A gateway server with the CLIs of the agents you enable: `grok`, `claude`.
+- One subscription or one provider key on the gateway.
+- Sign-in to Claude and the other provider CLIs from the same server that runs the gateway.
+- Redis when the gateway, admin, and API run as separate processes or on several machines. A local `go run` without Redis stores users, limits, and the proxy in `DATA_FILE`. WebSocket sessions are not written to Redis: a live conversation does not survive a process restart.
 
 ---
 
-## Установка
+## Install
 
-Релиз [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2) содержит бинарники `remote-llm`, пакет `.vsix` и образы этой версии в GHCR. Плагин в Marketplace не опубликован. Локально сервисы запускаются из исходников.
+Release [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2) contains the `remote-llm` binaries, a `.vsix` package, and images of that version in GHCR. The plugin is not published to the Marketplace. Locally, the services start from source.
 
 ```bash
 cp .env.example .env
-# задайте ADMIN_TOKEN в .env
+# set ADMIN_TOKEN in .env
 set -a && source .env && set +a
 go run ./gateway/cmd/gateway
 go run ./admin/cmd/admin
 go run ./api/cmd/api
 ```
 
-Админка открывается на `http://127.0.0.1:8081`. Токен пользователя показывается один раз при создании. Дальше:
+The admin UI opens at `http://127.0.0.1:8081`. A user's token is shown once, when the user is created. Then:
 
 ```bash
-go run ./cmd/remote-llm --gateway http://127.0.0.1:8080 --token <токен>
+go run ./cmd/remote-llm --gateway http://127.0.0.1:8080 --token <token>
 ```
 
-`GATEWAY_ECHO=1` в `.env` отвечает эхом и не требует установленных `grok` и `claude`. Для настоящих агентов уберите эту переменную: шлюз запустит `grok agent serve` или `claude agent serve` и пошлёт GPT в OpenAI Responses API. Вход в Claude и остальные такие сервисы делается на машине шлюза.
+`GATEWAY_ECHO=1` in `.env` replies with an echo and does not need `grok` or `claude` installed. For real agents, remove that variable: the gateway starts `grok agent serve` or `claude agent serve` and sends GPT to the OpenAI Responses API. Sign in to Claude and the other provider CLIs on the gateway machine.
 
-Один внешний вход описан в [`deploy/nginx/nginx.conf`](deploy/nginx/nginx.conf). Nginx принимает обычные запросы и WebSocket, а процессы слушают localhost:
+One public entry point is described in [`deploy/nginx/nginx.conf`](deploy/nginx/nginx.conf). Nginx accepts ordinary requests and WebSocket, and the processes listen on localhost:
 
-| Путь | Куда |
+| Path | Goes to |
 |---|---|
-| `/`, `/login`, `/users`, `/proxy` | админка |
-| `/v1/`, `/ws/` | шлюз, включая сессию ACP |
-| `/api/` | API, префикс снаружи снимается |
-| `/health`, `/health/admin`, `/health/api` | проверки трёх процессов |
+| `/`, `/login`, `/users`, `/proxy` | admin |
+| `/v1/`, `/ws/` | gateway, including the ACP session |
+| `/api/` | API, the external prefix is stripped |
+| `/health`, `/health/admin`, `/health/api` | health checks of the three processes |
 
-Тогда `GATEWAY_URL` указывает на nginx, без порта `8080`. В `.env.example` есть закомментированный вариант.
+Then `GATEWAY_URL` points at nginx, without port `8080`. `.env.example` has a commented example.
 
-Монорепозиторий:
+The monorepo:
 
-- `gateway/` — шлюз, WebSocket и ACP
-- `api/` — доступ по пользовательским токенам
-- `admin/` — веб-админка
-- `plugin/` — расширение VS Code и Cursor
+- `gateway/` — gateway, WebSocket, and ACP
+- `api/` — access by user tokens
+- `admin/` — web admin
+- `plugin/` — VS Code and Cursor extension
 - `cmd/remote-llm/` — CLI
-- `deploy/` — выкладка
+- `deploy/` — deployment
 
-План: [`ARCHITECTURE.md`](ARCHITECTURE.md). Задачи: [`TODO.md`](TODO.md).
-
----
-
-## Быстрый старт
-
-1. Поднять шлюз, `api` и админку командами из раздела «Установка». Состояние лежит в `DATA_FILE`, Redis для этого шага не нужен.
-2. В админке завести пользователя. При необходимости задать модель, лимит токенов, период сброса и прокси.
-3. В плагине указать `remoteLlm.gatewayUrl` и командой «Remote LLM: задать токен» сохранить токен в Secret Storage. Чат открывается командой «Remote LLM: открыть чат» и появляется вкладкой в правой панели. Команда «Remote LLM: показать назначенную модель» только показывает модель и расход. Либо запустить `remote-llm` из каталога проекта с тем же токеном (`--token` или `GATEWAY_TOKEN`).
-4. Сессия агента выполняется на сервере, в отдельном каталоге этого пользователя и проекта. Файлы проекта уходят туда при старте, изменённые файлы возвращаются после ответа.
+Plan: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
-## Настройки
+## Quick start
 
-| Настройка | Где | Что делает |
+1. Start the gateway, `api`, and admin with the commands from Install. State lives in `DATA_FILE`. Redis is not required for this step.
+2. Create a user in the admin UI. Set a model, a token limit, a reset period, and a proxy if you need them.
+3. In the plugin, set `remoteLlm.gatewayUrl` and save the token in Secret Storage with the command «Remote LLM: задать токен». The chat opens with «Remote LLM: открыть чат» and appears as a tab in the right sidebar. «Remote LLM: показать назначенную модель» only shows the model and usage. Or run `remote-llm` from the project directory with the same token (`--token` or `GATEWAY_TOKEN`).
+4. The agent session runs on the server, in a directory for that user and project. Project files go there at the start, and changed files come back after the reply.
+
+---
+
+## Settings
+
+| Setting | Where | What it does |
 |---|---|---|
-| Адрес шлюза | Плагин и CLI | Куда открывать WebSocket |
-| Токен пользователя | Secret Storage плагина и CLI | Кто подключается |
-| Принудительная LLM | Админка | Какую модель показывают плагин и CLI |
-| Лимит токенов и период сброса | Админка | Сколько токенов доступно пользователю, пока счётчик не обнулится |
-| Исходящий прокси | Админка и `.env` | Через какой выход агенты ходят к API провайдеров |
+| Gateway address | Plugin and CLI | Where to open the WebSocket |
+| User token | Plugin Secret Storage and CLI | Who is connecting |
+| Forced LLM | Admin | Which model the plugin and CLI show |
+| Token limit and reset period | Admin | How many tokens the user can spend before the counter resets |
+| Outbound proxy | Admin and `.env` | Which exit the agents use to reach provider APIs |
 
-Серверные части рассчитаны на Go. Плагин на JavaScript.
-
----
-
-## Как это работает
-
-Плагин и CLI тонкие. Они открывают WebSocket, передают протокол ACP и показывают ответ. Сессии, запуск агента, MCP и выполнение команд держит шлюз.
-
-Шлюз смотрит, назначена ли пользователю модель и не исчерпан ли его лимит токенов за текущий период. Затем поднимает backend в каталоге его сессии и проксирует исходящие вызовы через прокси из админки или `.env`.
-
-Подробности: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+The server pieces are written for Go. The plugin is JavaScript.
 
 ---
 
-## Разработка
+## How it works
 
-Push и pull request запускают [`.github/workflows/ci.yml`](.github/workflows/ci.yml): `gofmt`, `go vet`, `go test ./...`, проверка и тесты плагина, сборка `gateway`, `api`, `admin` и `remote-llm`. На pull request job образов проверяет сборку `linux/amd64`.
+The plugin and the CLI are thin. They open a WebSocket, pass the ACP protocol, and show the reply. The gateway owns sessions, agent startup, MCP, and command execution.
 
-Push в `main` публикует образы `linux/amd64` и `linux/arm64` в GitHub Container Registry. Тег образа — SHA коммита, плюс подвижный тег `main`:
+The gateway checks whether the user has an assigned model and whether the token limit for the current period is spent. It then starts the backend in that session's directory and proxies outbound calls through the proxy from the admin UI or `.env`.
+
+Details: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+---
+
+## Development
+
+A push and a pull request run [`.github/workflows/ci.yml`](.github/workflows/ci.yml): `gofmt`, `go vet`, `go test ./...`, the plugin check and tests, and builds of `gateway`, `api`, `admin`, and `remote-llm`. On a pull request the image job checks the `linux/amd64` build.
+
+A push to `main` publishes `linux/amd64` and `linux/arm64` images to GitHub Container Registry. The image tag is the commit SHA, plus a moving `main` tag:
 
 ```text
 ghcr.io/alanforester/remote-llm-gateway/gateway:<sha>
@@ -215,47 +217,47 @@ ghcr.io/alanforester/remote-llm-gateway/api:<sha>
 ghcr.io/alanforester/remote-llm-gateway/admin:<sha>
 ```
 
-Git-тег `vMAJOR.MINOR.PATCH` публикует те же образы с номером версии (`1.2.3` и `v1.2.3`) и тем же SHA. Этот тег собирает GitHub Release: бинарники `remote-llm` для Linux, macOS и Windows и пакет плагина `.vsix`. В описании релиза лежат имена образов этой версии.
+A git tag `vMAJOR.MINOR.PATCH` publishes the same images with the version number (`1.2.3` and `v1.2.3`) and the same SHA. That tag builds a GitHub Release: `remote-llm` binaries for Linux, macOS, and Windows, and the plugin `.vsix`. The release notes list the image names for that version.
 
 ```bash
 git tag v0.1.2
 git push origin v0.1.2
 ```
 
-Вход в реестр и создание релиза идут через `GITHUB_TOKEN`, который выдаёт сам GitHub Actions. В workflow у этих шагов права `packages: write` и `contents: write`. Отдельного токена в файлах репозитория нет. В Settings → Actions → General у репозитория должно быть разрешено чтение и запись для `GITHUB_TOKEN`, иначе публикация пакета остановится на правах.
+Registry login and release creation use `GITHUB_TOKEN`, which GitHub Actions provides. Those steps have `packages: write` and `contents: write`. There is no separate token in the repository files. In Settings → Actions → General the repository must allow read and write for `GITHUB_TOKEN`, or package publishing stops on permissions.
 
-Образ собирается из [`deploy/Dockerfile`](deploy/Dockerfile). Без `REDIS_URL` три процесса делят файл `/data/gateway.json`. Процесс в контейнере — пользователь `65532`. В образе `gateway` есть `git`, им пользуются агенты в сессии. `grok` и `claude` в образ не входят, их ставят на машине шлюза. Админке нужен `ADMIN_TOKEN`, без него процесс сразу завершается. Токен WebSocket передаётся заголовком `Authorization`, не в адресе. Nginx не пишет query string в access-лог и не публикует `/metrics`.
+The image is built from [`deploy/Dockerfile`](deploy/Dockerfile). Without `REDIS_URL` the three processes share the file `/data/gateway.json`. The process inside the container is user `65532`. The `gateway` image includes `git`, which agents use inside a session. `grok` and `claude` are not in the image; install them on the gateway machine. The admin process needs `ADMIN_TOKEN` and exits immediately without it. The WebSocket token is sent in the `Authorization` header, not in the URL. Nginx does not write the query string to the access log and does not publish `/metrics`.
 
-В шапке стоят бейджи лицензии, CI и релиза.
+The header carries badges for language, license, CI, and the release.
 
-Pull request'ы можно предлагать.
+Pull requests are welcome.
 
 ---
 
-## Выкладка
+## Deploy
 
-На одной машине стек поднимается из [`deploy/docker-compose.yml`](deploy/docker-compose.yml). Внутри Redis, `gateway`, `api`, `admin`, nginx, Prometheus и Grafana. Секреты читаются из `.env` рядом с репозиторием, в образ они не запекаются.
+On one machine the stack starts from [`deploy/docker-compose.yml`](deploy/docker-compose.yml). It includes Redis, `gateway`, `api`, `admin`, nginx, Prometheus, and Grafana. Secrets are read from `.env` next to the repository and are not baked into the image.
 
 ```bash
 cp .env.example .env
-# свой ADMIN_TOKEN и при необходимости OPENAI_API_KEY, OUTBOUND_PROXY
+# your own ADMIN_TOKEN and, if needed, OPENAI_API_KEY, OUTBOUND_PROXY
 docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 ```
 
-Админка открывается на порту `HTTP_PORT` (по умолчанию 80). `GATEWAY_URL` для плагина и CLI — этот адрес, без `:8080`. Grafana слушает `127.0.0.1:3000`, Prometheus — `127.0.0.1:9090`. Дашборд называется Remote LLM Gateway. Метрики процессов: `remote_llm_http_requests_total`, `remote_llm_tokens_total`, `remote_llm_quota_denied_total`, `remote_llm_sessions`. Nginx их наружу не отдаёт.
+The admin UI opens on `HTTP_PORT` (80 by default). `GATEWAY_URL` for the plugin and CLI is that address, without `:8080`. Grafana listens on `127.0.0.1:3000`, Prometheus on `127.0.0.1:9090`. The dashboard is named Remote LLM Gateway. Process metrics: `remote_llm_http_requests_total`, `remote_llm_tokens_total`, `remote_llm_quota_denied_total`, `remote_llm_sessions`. Nginx does not expose them.
 
-`IMAGE_TAG=local` собирает образы из [`deploy/Dockerfile`](deploy/Dockerfile). После публикации в GHCR тот же файл можно поднять без сборки:
+`IMAGE_TAG=local` builds images from [`deploy/Dockerfile`](deploy/Dockerfile). After a publish to GHCR the same file can start without a build:
 
 ```bash
 IMAGE_TAG=0.1.2 docker compose --env-file .env -f deploy/docker-compose.yml pull
 IMAGE_TAG=0.1.2 docker compose --env-file .env -f deploy/docker-compose.yml up -d
 ```
 
-`GATEWAY_ECHO=1` в `.env` оставляет эхо. Для настоящих агентов поставьте `0`: `grok` и `claude` должны быть доступны процессу шлюза.
+`GATEWAY_ECHO=1` in `.env` keeps the echo. For real agents set it to `0`: `grok` and `claude` must be available to the gateway process.
 
-Обновление на VPS — сменить `IMAGE_TAG` на SHA коммита с `main` или на номер релиза и снова выполнить `pull` и `up -d`. Redis и каталог worktree лежат в томах `redis-data` и `workspaces`, их `up` не стирает.
+To update a VPS, change `IMAGE_TAG` to a commit SHA from `main` or to a release number, then run `pull` and `up -d` again. Redis and the worktree directory live in the `redis-data` and `workspaces` volumes, and `up` does not erase them.
 
-Kubernetes-манифесты — [`deploy/k8s`](deploy/k8s). Туда входят те же процессы. Секрет в репозиторий не кладётся:
+Kubernetes manifests are in [`deploy/k8s`](deploy/k8s). They include the same processes. The secret is not stored in the repository:
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
@@ -267,20 +269,20 @@ kubectl -n remote-llm create secret generic remote-llm \
 kubectl apply -k deploy
 ```
 
-Образ по умолчанию — тег `main`. Другую версию задаёт `newTag` в [`deploy/kustomization.yaml`](deploy/kustomization.yaml). Сервис `nginx` типа LoadBalancer открывает порт 80. На VPS без балансировщика смените тип на NodePort. Grafana остаётся внутри кластера: `kubectl -n remote-llm port-forward svc/grafana 3000:3000`. В манифесте `GATEWAY_ECHO=1`; для боевых агентов поменяйте значение в `deploy/k8s/apps.yaml` и примените kustomization снова. Если кластер не скачивает образ, откройте пакет GHCR или добавьте `imagePullSecret`.
+The default image tag is `main`. Another version is set with `newTag` in [`deploy/kustomization.yaml`](deploy/kustomization.yaml). The `nginx` Service of type LoadBalancer opens port 80. On a VPS without a load balancer, change the type to NodePort. Grafana stays inside the cluster: `kubectl -n remote-llm port-forward svc/grafana 3000:3000`. The manifest sets `GATEWAY_ECHO=1`; for production agents change the value in `deploy/k8s/apps.yaml` and apply the kustomization again. If the cluster cannot pull the image, make the GHCR package public or add an `imagePullSecret`.
 
 ---
 
-## Ограничения
+## Limits
 
-- Плагин в Marketplace не опубликован. Готовый `.vsix` лежит в релизе [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2).
-- Вход в аккаунт провайдера делается на сервере шлюза, с рабочей машины пользователя этот вход не проходит.
-- GPT подключается через OpenAI Responses API в шлюзе. Отдельного процесса Codex нет.
+- The plugin is not published to the Marketplace. A ready `.vsix` is in release [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2).
+- Provider account sign-in happens on the gateway server. It does not work from the user's own machine.
+- GPT connects through the OpenAI Responses API inside the gateway. There is no separate Codex process.
 
 ---
 
-## Лицензия
+## License
 
-MIT. Текст в [LICENSE](LICENSE).
+MIT. The text is in [LICENSE](LICENSE).
 
-Интерфейс плагина опирается на [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode). У того проекта своя лицензия. Этот репозиторий публикуется под MIT.
+The plugin UI is based on [phuryn/grok-build-vscode](https://github.com/phuryn/grok-build-vscode). That project has its own license. This repository is published under MIT.
