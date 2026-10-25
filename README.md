@@ -14,6 +14,8 @@
 [![Release](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
 [![Star on GitHub](https://img.shields.io/github/stars/AlanForester/remote-llm-gateway?style=social)](https://github.com/AlanForester/remote-llm-gateway/stargazers)
 
+[Русская версия README](README.ru.md)
+
 Support the project — [star it on GitHub](https://github.com/AlanForester/remote-llm-gateway/stargazers).
 
 > **Remote LLM Gateway** is one gateway for Grok Build, Claude Code, and GPT. The VS Code and Cursor plugin and the `remote-llm` CLI work with the local project, while the agents, tools, and MCP run on the server. This project is not affiliated with or endorsed by xAI, Anthropic, OpenAI, or Meta. The names *Grok*, *Grok Build*, *Claude Code*, *Codex*, and *Muse Code* are used only to describe compatibility.
