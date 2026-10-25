@@ -168,8 +168,6 @@ The monorepo:
 - `cmd/remote-llm/` — CLI
 - `deploy/` — deployment
 
-Plan: [`ARCHITECTURE.md`](ARCHITECTURE.md).
-
 ---
 
 ## Quick start
@@ -200,8 +198,6 @@ The server pieces are written for Go. The plugin is JavaScript.
 The plugin and the CLI are thin. They open a WebSocket, pass the ACP protocol, and show the reply. The gateway owns sessions, agent startup, MCP, and command execution.
 
 The gateway checks whether the user has an assigned model and whether the token limit for the current period is spent. It then starts the backend in that session's directory and proxies outbound calls through the proxy from the admin UI or `.env`.
-
-Details: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
