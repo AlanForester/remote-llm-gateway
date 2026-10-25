@@ -514,4 +514,3 @@ func TestSessionHistoryAndPatchFiles(t *testing.T) {
 		t.Fatalf("expected 404 after delete, got %d", r.Code)
 	}
 }
-
