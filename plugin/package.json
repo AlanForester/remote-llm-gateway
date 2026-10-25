@@ -1,6 +1,6 @@
 {
-  "name": "remote-llm-gateway",
-  "displayName": "Remote LLM Gateway",
+  "name": "remote-llm-gateway-2",
+  "displayName": "Remote LLM Gateway 2",
   "description": "Chat with Remote LLM Gateway. The project stays on your machine, the agent runs on the gateway, and edits come back to the editor.",
   "icon": "media/icon-light.png",
   "version": "0.1.3",
