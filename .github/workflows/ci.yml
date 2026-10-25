@@ -29,18 +29,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Забрать исходники
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Поставить Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.9"
           cache: true
 
       - name: Поставить Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
+          package-manager-cache: false
 
       - name: Проверить форматирование
         run: |
@@ -66,8 +67,11 @@ jobs:
 
       - name: Проверить и протестировать плагин
         run: |
+          node --check plugin/src/chat-page.js
+          node --check plugin/src/chat-ui.js
           node --check plugin/src/extension.js
           node --check plugin/src/sync.js
+          node --check plugin/src/turn.js
           node --check plugin/src/ws.js
           node --test plugin/src/*.test.js
 
@@ -100,7 +104,7 @@ jobs:
             git: "0"
     steps:
       - name: Забрать исходники
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Проверить тег версии
         if: startsWith(github.ref, 'refs/tags/')
@@ -118,7 +122,7 @@ jobs:
 
       - name: Войти в GHCR
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -126,7 +130,7 @@ jobs:
 
       - name: Теги образа
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ steps.image.outputs.name }}
           flavor: |
@@ -138,13 +142,13 @@ jobs:
             type=semver,pattern={{raw}}
 
       - name: QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Собрать и опубликовать
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
@@ -166,7 +170,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Забрать исходники
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Проверить тег версии
         run: |
@@ -178,7 +182,7 @@ jobs:
         id: version
 
       - name: Поставить Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.9"
           cache: true
@@ -206,9 +210,10 @@ jobs:
           EOF
 
       - name: Поставить Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
+          package-manager-cache: false
 
       - name: Собрать vsix
         working-directory: plugin
@@ -223,7 +228,7 @@ jobs:
             --out "../dist/remote-llm-gateway-${VERSION}.vsix"
 
       - name: Сохранить артефакты
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release
           path: dist/*
@@ -238,10 +243,10 @@ jobs:
       contents: write
     steps:
       - name: Забрать исходники
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Скачать артефакты
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: release
           path: dist
