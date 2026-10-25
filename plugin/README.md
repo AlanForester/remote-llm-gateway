@@ -1,18 +1,18 @@
 # Remote LLM Gateway
 
-Чат в правой боковой панели, рядом с Grok. Проект остаётся на вашей машине: в начале сессии файлы уходят на шлюз, после ответа правки записываются обратно в редактор.
+A chat in the right sidebar, next to Grok. The project stays on your machine: at the start of a session the files go to the gateway, and after the reply the edits are written back into the editor.
 
-Локальные `grok` и `claude` плагин не запускает. Модель, лимит и прокси задаются в админке шлюза.
+The plugin does not start a local `grok` or `claude`. The model, the limit, and the proxy are set in the gateway admin UI.
 
-## Настройки
+## Settings
 
-| Настройка | Что делает |
+| Setting | What it does |
 |---|---|
-| `remoteLlm.gatewayUrl` | Адрес шлюза, `http` или `ws` |
-| `remoteLlm.useRemoteGateway` | Подключаться к шлюзу |
+| `remoteLlm.gatewayUrl` | Gateway address, `http` or `ws` |
+| `remoteLlm.useRemoteGateway` | Connect to the gateway |
 
-Токен пользователя задаётся командой «Remote LLM: задать токен» и хранится в Secret Storage редактора, не в `settings.json`. Команда «Remote LLM: показать назначенную модель» показывает модель и расход.
+The user token is saved with the command «Remote LLM: задать токен» and stored in the editor's Secret Storage, not in `settings.json`. «Remote LLM: показать назначенную модель» shows the model and usage.
 
-Репозиторий: https://github.com/AlanForester/remote-llm-gateway
+Repository: https://github.com/AlanForester/remote-llm-gateway
 
-Лицензия: MIT.
+License: MIT.

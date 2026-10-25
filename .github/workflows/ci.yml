@@ -2,6 +2,8 @@
 # Push в main: образы gateway, api, admin в GHCR с тегом SHA коммита и тегом main.
 # Тег vMAJOR.MINOR.PATCH: те же образы с номером версии и GitHub Release
 # (бинарники remote-llm, пакет .vsix, ссылки на образы).
+# Тот же тег, и ручной запуск, публикуют vsix, если в секретах репозитория
+# лежат VSCE_PAT и OVSX_PAT. Сами токены в файлы не записываются.
 #
 # Реестр и релиз используют встроенный GITHUB_TOKEN. Отдельный токен
 # в репозиторий и в файлы workflow не кладётся.
@@ -15,6 +17,7 @@ on:
     tags:
       - "v*.*.*"
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -276,3 +279,57 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file /tmp/release.md
+
+  marketplace:
+    name: Маркетплейс
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v6
+
+      - name: Поставить Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Собрать vsix
+        working-directory: plugin
+        run: |
+          cp ../LICENSE LICENSE
+          version=$(node -p "require('./package.json').version")
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          npx --yes @vscode/vsce@4.0.0 package "$version" \
+            --no-git-tag-version \
+            --no-update-package-json \
+            --no-dependencies \
+            --out "../dist/remote-llm-gateway.vsix"
+
+      - name: Опубликовать
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -eu
+          published=0
+          if [ -n "${VSCE_PAT}" ]; then
+            npx --yes @vscode/vsce@4.0.0 publish \
+              --packagePath dist/remote-llm-gateway.vsix \
+              --pat "$VSCE_PAT"
+            published=1
+          else
+            echo "VSCE_PAT не задан, Visual Studio Marketplace пропущен."
+          fi
+          if [ -n "${OVSX_PAT}" ]; then
+            npx --yes ovsx@0.10.5 publish dist/remote-llm-gateway.vsix --pat "$OVSX_PAT"
+            published=1
+          else
+            echo "OVSX_PAT не задан, Open VSX пропущен."
+          fi
+          if [ "$published" -eq 0 ] && [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "Нет ни VSCE_PAT, ни OVSX_PAT."
+            exit 1
+          fi

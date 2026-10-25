@@ -1,15 +1,20 @@
 {
   "name": "remote-llm-gateway",
   "displayName": "Remote LLM Gateway",
-  "description": "Чат с Remote LLM Gateway. Проект остаётся локально, агент работает на шлюзе, правки возвращаются в редактор.",
+  "description": "Chat with Remote LLM Gateway. The project stays on your machine, the agent runs on the gateway, and edits come back to the editor.",
   "icon": "media/icon-light.png",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "alanforester",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/AlanForester/remote-llm-gateway.git"
   },
+  "homepage": "https://github.com/AlanForester/remote-llm-gateway",
+  "bugs": {
+    "url": "https://github.com/AlanForester/remote-llm-gateway/issues"
+  },
+  "keywords": ["llm", "gateway", "grok", "claude", "cursor", "chat"],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -55,12 +60,12 @@
         "remoteLlm.useRemoteGateway": {
           "type": "boolean",
           "default": true,
-          "description": "Подключаться к шлюзу вместо локального CLI."
+          "description": "Connect to the gateway instead of a local CLI."
         },
         "remoteLlm.gatewayUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8080",
-          "description": "Адрес шлюза, http или ws."
+          "description": "Gateway address, http or ws."
         }
       }
     }
