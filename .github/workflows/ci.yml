@@ -297,6 +297,7 @@ jobs:
       - name: Собрать vsix
         working-directory: plugin
         run: |
+          mkdir -p ../dist
           cp ../LICENSE LICENSE
           version=$(node -p "require('./package.json').version")
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
@@ -320,4 +321,6 @@ jobs:
             fi
             exit 0
           fi
+          npx --yes ovsx@0.10.5 create-namespace alanforester --pat "$OVSX_PAT" \
+            || echo "Namespace alanforester уже есть или его создаст публикация."
           npx --yes ovsx@0.10.5 publish dist/remote-llm-gateway.vsix --pat "$OVSX_PAT"
