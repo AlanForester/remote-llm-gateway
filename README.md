@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
-[![Open VSX](https://img.shields.io/open-vsx/v/alanforester/remote-llm-gateway-2?label=Open%20VSX)](https://open-vsx.org/extension/alanforester/remote-llm-gateway-2)
+[![Open VSX](https://img.shields.io/open-vsx/v/alanforester/remote-llm-gateway?label=Open%20VSX)](https://open-vsx.org/extension/alanforester/remote-llm-gateway)
 [![Star on GitHub](https://img.shields.io/github/stars/AlanForester/remote-llm-gateway?style=social)](https://github.com/AlanForester/remote-llm-gateway/stargazers)
 
 [Русская версия README](README.ru.md)
