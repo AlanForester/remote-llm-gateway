@@ -2,6 +2,7 @@
   "name": "remote-llm-gateway",
   "displayName": "Remote LLM Gateway",
   "description": "Чат с Remote LLM Gateway. Проект остаётся локально, агент работает на шлюзе, правки возвращаются в редактор.",
+  "icon": "media/icon-light.png",
   "version": "0.1.2",
   "publisher": "alanforester",
   "license": "MIT",

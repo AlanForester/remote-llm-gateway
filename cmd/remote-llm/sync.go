@@ -16,8 +16,17 @@ func pushProject(gateway, token, sessionID, workspace string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := putFiles(gateway, token, sessionID, snap.Files); err != nil {
+	chunks := filesync.Chunk(snap.Files, filesync.MaxRequestFiles, filesync.MaxRequestBytes)
+	if len(chunks) == 0 {
+		chunks = [][]filesync.File{{}}
+	}
+	if err := putFiles(gateway, token, sessionID, chunks[0]); err != nil {
 		return nil, err
+	}
+	for _, chunk := range chunks[1:] {
+		if err := patchFiles(gateway, token, sessionID, chunk); err != nil {
+			return nil, err
+		}
 	}
 	return snap.Skipped, nil
 }
@@ -34,11 +43,19 @@ func pullProject(gateway, token, sessionID, workspace string) ([]filesync.File, 
 }
 
 func putFiles(gateway, token, sessionID string, files []filesync.File) error {
+	return writeFiles(http.MethodPut, gateway, token, sessionID, files)
+}
+
+func patchFiles(gateway, token, sessionID string, files []filesync.File) error {
+	return writeFiles(http.MethodPatch, gateway, token, sessionID, files)
+}
+
+func writeFiles(method, gateway, token, sessionID string, files []filesync.File) error {
 	body, err := json.Marshal(map[string]any{"files": files})
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPut, sessionURL(gateway, sessionID, "files"), bytes.NewReader(body))
+	req, err := http.NewRequest(method, sessionURL(gateway, sessionID, "files"), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

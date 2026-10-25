@@ -18,12 +18,19 @@ import (
 )
 
 const (
-	// MaxFiles is how many project files one snapshot may contain.
+	// MaxFiles is how many files one PUT or PATCH may contain.
 	MaxFiles = 4000
-	// MaxFileBytes is the largest single file.
+	// MaxFileBytes is the largest single file. Larger files are skipped.
 	MaxFileBytes = 1 << 20
-	// MaxTotalBytes is the largest snapshot, under the nginx body limit.
+	// MaxTotalBytes is the largest file payload in one request, under the nginx body limit.
 	MaxTotalBytes = 24 << 20
+	// MaxRequestFiles and MaxRequestBytes leave room for JSON around that payload.
+	MaxRequestFiles = 500
+	MaxRequestBytes = 8 << 20
+	// MaxProjectFiles and MaxProjectBytes bound the whole session copy.
+	// Past this the rest is skipped and the prompt still runs.
+	MaxProjectFiles = 20000
+	MaxProjectBytes = 256 << 20
 )
 
 // ErrPath means the relative path leaves the session directory.
@@ -304,7 +311,16 @@ func Collect(root string) (Snapshot, error) {
 		if ignored[rel] || !keepRel(rel) {
 			continue
 		}
-		body, err := os.ReadFile(filepath.Join(abs, filepath.FromSlash(rel)))
+		full := filepath.Join(abs, filepath.FromSlash(rel))
+		info, err := os.Stat(full)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if info.Size() > MaxFileBytes || len(snap.Files) >= MaxProjectFiles || total+int(info.Size()) > MaxProjectBytes {
+			snap.Skipped = append(snap.Skipped, rel)
+			continue
+		}
+		body, err := os.ReadFile(full)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -312,13 +328,37 @@ func Collect(root string) (Snapshot, error) {
 			snap.Skipped = append(snap.Skipped, rel)
 			continue
 		}
-		if len(snap.Files) >= MaxFiles || total+len(body) > MaxTotalBytes {
-			return Snapshot{}, ErrTooLarge
-		}
 		total += len(body)
 		snap.Files = append(snap.Files, FileFrom(rel, body))
 	}
 	return snap, nil
+}
+
+// Chunk splits files into requests that stay under the per-request limits.
+func Chunk(files []File, maxFiles, maxBytes int) [][]File {
+	if maxFiles < 1 {
+		maxFiles = 1
+	}
+	if maxBytes < 1 {
+		maxBytes = 1
+	}
+	var chunks [][]File
+	var cur []File
+	size := 0
+	for _, f := range files {
+		n := len(f.Path) + len(f.Content) + 64
+		if len(cur) > 0 && (len(cur) >= maxFiles || size+n > maxBytes) {
+			chunks = append(chunks, cur)
+			cur = nil
+			size = 0
+		}
+		cur = append(cur, f)
+		size += n
+	}
+	if len(cur) > 0 {
+		chunks = append(chunks, cur)
+	}
+	return chunks
 }
 
 func keepRel(rel string) bool {

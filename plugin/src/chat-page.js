@@ -12,9 +12,11 @@ function chatPage() {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
 <style>
   :root { color-scheme: dark; }
-  html, body { height: 100%; }
+  html, body { height: 100%; max-width: 100%; }
   body {
     margin: 0;
+    min-width: 0;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
@@ -177,56 +179,11 @@ function chatPage() {
     opacity: .95;
   }
   .welcome-title {
-    margin: 0 0 4px;
+    margin: 0;
     font-size: 20px;
     font-weight: 600;
     letter-spacing: -0.01em;
   }
-  .welcome-sub {
-    font-size: 12px;
-    opacity: .55;
-  }
-  .tip-banner {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 9px 11px;
-    border-radius: 9px;
-    border: 1px solid var(--vscode-widget-border, rgba(255,255,255,.1));
-    background: rgba(255,255,255,.03);
-    font-size: 12px;
-    line-height: 1.4;
-  }
-  .tip-banner[hidden] { display: none; }
-  .tip-icon {
-    display: inline-flex;
-    color: #e3b341;
-    flex-shrink: 0;
-  }
-  .tip-text {
-    flex: 1;
-    color: var(--vscode-foreground);
-    opacity: .9;
-  }
-  .tip-link {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    color: #388bfd;
-    text-decoration: underline;
-    cursor: pointer;
-    font: inherit;
-  }
-  .tip-close {
-    background: transparent;
-    border: 0;
-    padding: 2px;
-    opacity: .55;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-  }
-  .tip-close:hover { opacity: 1; }
 
   /* Chat Log */
   #log {
@@ -330,9 +287,13 @@ function chatPage() {
   #jump[hidden] { display: none; }
 
   /* Composer Dock */
-  .dock { position: relative; padding: 0 10px 10px; }
+  .welcome, #log, .dock { min-width: 0; max-width: 100%; }
+  .dock { position: relative; padding: 0 10px 10px; box-sizing: border-box; }
   .composer {
     position: relative;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     border: 1px solid var(--vscode-focusBorder, #1f6feb);
     border-radius: 10px;
     background: var(--vscode-input-background, #0d1117);
@@ -355,10 +316,15 @@ function chatPage() {
     display: flex;
     align-items: center;
     gap: 2px;
+    width: 100%;
+    min-width: 0;
     min-height: 28px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow: hidden;
+    container-type: inline-size;
   }
-  .toolbar .spacer { flex: 1; }
+  .toolbar .spacer { flex: 1 1 auto; min-width: 0; }
+  .iconbtn, .chip, .auto, .context, .file-pill, .send { flex-shrink: 0; }
   .iconbtn, .chip, .auto {
     display: inline-flex;
     align-items: center;
@@ -367,8 +333,14 @@ function chatPage() {
     padding: 3px 6px;
     font-size: 12px;
     opacity: .88;
+    white-space: nowrap;
   }
   .model-chip {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 9em;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-weight: 600;
     opacity: .95;
   }
@@ -402,11 +374,24 @@ function chatPage() {
     max-width: 140px;
   }
   .file-pill[hidden] { display: none; }
-  .file-pill.off {
-    opacity: .42;
-    text-decoration: line-through;
+  .file-pill.off { opacity: .42; }
+  .file-pill.off #active-file-name { text-decoration: line-through; }
+  .file-ico {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
   }
-  .file-pill span {
+  .file-count {
+    display: none;
+    position: absolute;
+    right: -5px;
+    bottom: -4px;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  #active-file-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -468,6 +453,20 @@ function chatPage() {
   }
   #model-menu { left: 48px; }
   #effort-menu { left: 118px; }
+  @container (max-width: 520px) {
+    .auto-label { display: none; }
+    #active-file-name { display: none; }
+    .file-count { display: block; }
+    .file-pill {
+      padding: 3px 5px;
+      max-width: none;
+      border-color: transparent;
+      background: transparent;
+    }
+  }
+  @container (max-width: 400px) {
+    .effort-chip { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -496,12 +495,6 @@ function chatPage() {
   <div class="welcome-center">
     <div class="welcome-logo">${svg("cube")}</div>
     <h1 class="welcome-title">Remote LLM</h1>
-    <div class="welcome-sub">previously Grok Build (Community)</div>
-  </div>
-  <div class="tip-banner" id="tip-banner">
-    <span class="tip-icon">${svg("bulb")}</span>
-    <span class="tip-text">Grok isn't your only agent. <button type="button" class="tip-link" id="connect-agents">Connect Codex or Claude Code</button> and pick one per conversation.</span>
-    <button type="button" class="tip-close" id="tip-close" aria-label="Dismiss">${svg("close")}</button>
   </div>
 </div>
 
@@ -509,16 +502,16 @@ function chatPage() {
 <button id="jump" type="button" hidden aria-label="Вниз">${svg("down")}</button>
 <div class="dock">
   <form class="composer" id="composer">
-    <textarea id="text" rows="2" placeholder="Ask Grok..."></textarea>
+    <textarea id="text" rows="2" placeholder="Ask..."></textarea>
     <div class="toolbar">
       <button class="iconbtn" id="plus" type="button" aria-label="Ещё">${svg("plus")}</button>
       <button class="iconbtn" id="mic" type="button" aria-label="Голос">${svg("mic")}</button>
       <button class="chip model-chip" id="model" type="button">Grok 4.6</button>
       <button class="chip effort-chip" id="effort" type="button" title="Reasoning effort">High ${svg("chev")}</button>
       <span class="context" id="context" title="Context window">${svg("donut")}<span id="usage">0K/500K</span></span>
-      <button class="file-pill" id="active-file" type="button" hidden title="Active file in editor">${svg("file")}<span id="active-file-name"></span></button>
+      <button class="file-pill" id="active-file" type="button" hidden title="Active file in editor"><span class="file-ico">${svg("file")}<span class="file-count">1</span></span><span id="active-file-name"></span></button>
       <span class="spacer"></span>
-      <button class="auto on" id="auto" type="button">${svg("bolt")} Auto accept</button>
+      <button class="auto on" id="auto" type="button">${svg("bolt")}<span class="auto-label">Auto accept</span></button>
       <button class="send" id="send" type="submit" aria-label="Отправить" disabled>
         <span id="send-icon">${svg("send")}</span>
         <span id="stop-icon" hidden>${svg("stop")}</span>
@@ -589,12 +582,6 @@ function svg(name) {
   }
   if (name === "dots") {
     return `<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor"/></svg>`;
-  }
-  if (name === "bulb") {
-    return `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 12h4M6.5 14h3M8 2a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.2v.6h4v-.6c0-.5.2-.9.6-1.2A4.5 4.5 0 0 0 8 2Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>`;
-  }
-  if (name === "close") {
-    return `<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
   }
   if (name === "cube") {
     return `<svg width="54" height="54" viewBox="0 0 64 64" aria-hidden="true">

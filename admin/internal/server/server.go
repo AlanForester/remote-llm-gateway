@@ -270,7 +270,7 @@ func (s *Server) pageView(fresh shownToken, draft, errText, csrf string) view {
 	}
 	adminURL, adminAt, _ := s.opt.Store.ProxySettings()
 	usage, _ := s.opt.Store.Usage(1000)
-	return view{
+	v := view{
 		Users:         rows,
 		UsageRows:     usageRows(usage, names),
 		ModelBars:     modelBars(usage),
@@ -286,7 +286,10 @@ func (s *Server) pageView(fresh shownToken, draft, errText, csrf string) view {
 		DraftToken:    draft,
 		Error:         errText,
 		CSRF:          csrf,
+		OpenProxy:     strings.HasPrefix(errText, "Адрес прокси"),
 	}
+	v.OpenUsers = draft != "" || fresh.Token != "" || (errText != "" && !v.OpenProxy)
+	return v
 }
 
 func usageRows(events []store.UsageEvent, names map[string]string) []usageRow {
@@ -502,6 +505,8 @@ type view struct {
 	FreshMode     string
 	DraftToken    string
 	CSRF          string
+	OpenUsers     bool
+	OpenProxy     bool
 }
 
 type shownToken struct {

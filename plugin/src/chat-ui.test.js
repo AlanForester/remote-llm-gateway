@@ -38,12 +38,17 @@ test("tool summary reads like the activity row", () => {
 test("chatPage renders Remote LLM welcome screen, header bar, and composer", () => {
   const html = chatPage();
   assert.match(html, /<h1 class="welcome-title">Remote LLM<\/h1>/);
+  assert.equal(html.includes("previously Grok Build"), false);
   assert.equal(html.includes("AFK Pilot"), false);
   assert.match(html, /id="session-title">New session<\/div>/);
-  assert.match(html, /placeholder="Ask Grok\.\.\."/);
+  assert.match(html, /placeholder="Ask\.\.\."/);
+  assert.equal(html.includes("Ask Grok"), false);
   assert.match(html, /id="usage">0K\/500K<\/span>/);
   assert.match(html, /id="active-file"/);
+  assert.match(html, /flex-wrap: nowrap/);
+  assert.match(html, /class="file-count">1</);
   assert.match(html, /id="history-btn"/);
-  assert.match(html, /Connect Codex or Claude Code/);
+  assert.equal(html.includes("Connect Codex or Claude Code"), false);
+  assert.equal(html.includes("tip-banner"), false);
 });
 

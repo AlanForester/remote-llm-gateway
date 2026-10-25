@@ -136,7 +136,7 @@ function shortTitle(prompt) {
 }
 
 const modelNames = { grok: "Grok 4.6", claude: "Claude Code", gpt: "Codex" };
-const modelPlaceholders = { grok: "Ask Grok...", claude: "Ask Claude...", gpt: "Ask Codex..." };
+const modelPlaceholders = { grok: "Ask...", claude: "Ask Claude...", gpt: "Ask Codex..." };
 const effortNames = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high" };
 
 function boot() {
@@ -548,26 +548,6 @@ function boot() {
   if (moreBtn) {
     moreBtn.addEventListener("click", () => toggleMenu("more"));
   }
-  const tipClose = document.getElementById("tip-close");
-  if (tipClose) {
-    tipClose.addEventListener("click", () => {
-      const banner = document.getElementById("tip-banner");
-      if (banner) {
-        banner.hidden = true;
-      }
-    });
-  }
-  const connectAgents = document.getElementById("connect-agents");
-  if (connectAgents) {
-    connectAgents.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (!modelLocked) {
-        toggleMenu("model");
-      } else {
-        vscode.postMessage({ type: "showModel" });
-      }
-    });
-  }
   if (activeFileBtn) {
     activeFileBtn.addEventListener("click", () => {
       includeActiveFile = !includeActiveFile;
@@ -723,8 +703,7 @@ function boot() {
       !event.target.closest("#model") &&
       !event.target.closest("#effort") &&
       !event.target.closest("#history-btn") &&
-      !event.target.closest("#more-btn") &&
-      !event.target.closest("#connect-agents")
+      !event.target.closest("#more-btn")
     ) {
       closeMenus();
     }

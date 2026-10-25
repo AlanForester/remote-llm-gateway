@@ -162,6 +162,22 @@ func TestCollectSkipsGitignored(t *testing.T) {
 	}
 }
 
+func TestChunkSplitsBeforeRequestLimit(t *testing.T) {
+	files := []File{
+		{Path: "a.txt", Content: "12345"},
+		{Path: "b.txt", Content: "12345"},
+		{Path: "c.txt", Content: "12345"},
+	}
+	chunks := Chunk(files, 2, 1000)
+	if len(chunks) != 2 || len(chunks[0]) != 2 || len(chunks[1]) != 1 {
+		t.Fatalf("by count: %+v", chunks)
+	}
+	chunks = Chunk(files, 10, len(files[0].Path)+len(files[0].Content)+64+1)
+	if len(chunks) != 3 {
+		t.Fatalf("by size: %d", len(chunks))
+	}
+}
+
 func runGit(dir string, args ...string) error {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_COMMITTER_NAME=test")

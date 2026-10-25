@@ -1,4 +1,5 @@
 const path = require("path");
+const { execFile } = require("child_process");
 const vscode = require("vscode");
 const { chatPage } = require("./chat-page");
 const sync = require("./sync");
@@ -339,8 +340,14 @@ class ChatView {
       }
       const syncResult = await uploadProject(cfg, folder, this.sessionId, this.uploadedHashes);
       this.uploadedHashes = syncResult.hashes;
-      for (const name of syncResult.skipped) {
+      for (const name of syncResult.skipped.slice(0, 5)) {
         this.post("status", "пропущен " + name);
+      }
+      if (syncResult.omitted > 0) {
+        this.post(
+          "status",
+          "на шлюз ушла только часть проекта, пропущено файлов: " + syncResult.omitted
+        );
       }
       if (!this.socket) {
         this.socket = await ws.connect(ws.gatewaySocketURL(cfg.get("gatewayUrl"), this.sessionId), {
@@ -485,45 +492,87 @@ async function uploadProject(cfg, folder, sessionId, prevHashes) {
   const uris = await vscode.workspace.findFiles(
     "**/*",
     "**/{.git,node_modules,vendor,.next,dist,build,target,.venv,venv,__pycache__}/**",
-    sync.MAX_FILES
+    100000
   );
-  if (uris.length >= sync.MAX_FILES) {
-    throw new Error("слишком большой проект");
-  }
-  const files = [];
-  const skipped = [];
-  let total = 0;
+  const found = [];
   for (const uri of uris) {
     const rel = sync.safeRelative(path.relative(folder.uri.fsPath, uri.fsPath));
-    if (!rel) {
+    if (rel && !sync.inSkipDir(rel)) {
+      found.push({ rel, uri });
+    }
+  }
+  const ignored = await gitIgnored(
+    folder.uri.fsPath,
+    found.map((item) => item.rel)
+  );
+  const files = [];
+  const skipped = [];
+  let omitted = 0;
+  let total = 0;
+  for (const item of found) {
+    if (ignored.has(item.rel)) {
       continue;
     }
-    const stat = await vscode.workspace.fs.stat(uri);
+    const stat = await vscode.workspace.fs.stat(item.uri);
     if (stat.size > sync.MAX_FILE_BYTES) {
-      skipped.push(rel);
+      skipped.push(item.rel);
       continue;
     }
-    const raw = Buffer.from(await vscode.workspace.fs.readFile(uri));
-    total += raw.length;
-    if (total > sync.MAX_TOTAL_BYTES) {
-      throw new Error("слишком большой проект");
+    if (files.length >= sync.MAX_PROJECT_FILES || total + stat.size > sync.MAX_PROJECT_BYTES) {
+      omitted++;
+      continue;
     }
-    const file = sync.fileFromBuffer(rel, raw);
+    const raw = Buffer.from(await vscode.workspace.fs.readFile(item.uri));
+    const file = sync.fileFromBuffer(item.rel, raw);
     if (!file) {
-      skipped.push(rel);
+      skipped.push(item.rel);
       continue;
     }
+    total += raw.length;
     files.push(file);
   }
+  const chunks = sync.chunkFiles(files, sync.MAX_REQUEST_FILES, sync.MAX_REQUEST_BYTES);
   if (!prevHashes) {
-    await putJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files });
-    return { skipped, hashes: sync.hashSnapshot(files) };
+    const first = chunks[0] || [];
+    await putJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files: first });
+    for (const chunk of chunks.slice(1)) {
+      await patchJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files: chunk });
+    }
+    return { skipped, omitted, hashes: sync.hashSnapshot(files) };
   }
   const { patch, nextMap } = sync.diffSnapshot(prevHashes, files);
-  if (patch.length > 0) {
-    await patchJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files: patch });
+  for (const chunk of sync.chunkFiles(patch, sync.MAX_REQUEST_FILES, sync.MAX_REQUEST_BYTES)) {
+    await patchJSON(cfg, "/v1/sessions/" + sessionId + "/files", { files: chunk });
   }
-  return { skipped, hashes: nextMap };
+  return { skipped, omitted, hashes: nextMap };
+}
+
+function gitIgnored(cwd, rels) {
+  return new Promise((resolve) => {
+    if (!rels.length) {
+      resolve(new Set());
+      return;
+    }
+    let settled = false;
+    const done = (stdout) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(sync.ignoredFromCheck(stdout));
+    };
+    const child = execFile(
+      "git",
+      ["-C", cwd, "check-ignore", "--stdin", "-z"],
+      { maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout) => done(stdout)
+    );
+    child.on("error", () => done(""));
+    if (child.stdin) {
+      child.stdin.on("error", () => {});
+      child.stdin.end(rels.join("\0") + "\0");
+    }
+  });
 }
 
 async function applyChanges(folder, files, knownHashes) {

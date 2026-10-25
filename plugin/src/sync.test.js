@@ -22,6 +22,28 @@ test("planApply rejects a parent path", () => {
   assert.throws(() => sync.planApply([{ path: "../x", content: "a" }]), /запрещ/);
 });
 
+test("chunkFiles stays under the request budget", () => {
+  const files = [
+    { path: "a.txt", content: "12345" },
+    { path: "b.txt", content: "12345" },
+    { path: "c.txt", content: "12345" },
+  ];
+  const byCount = sync.chunkFiles(files, 2, 1000);
+  assert.equal(byCount.length, 2);
+  assert.equal(byCount[0].length, 2);
+  assert.equal(byCount[1].length, 1);
+  const bySize = sync.chunkFiles(files, 10, "a.txt".length + "12345".length + 64 + 1);
+  assert.equal(bySize.length, 3);
+});
+
+test("gitignore output and dependency directories are excluded", () => {
+  const ignored = sync.ignoredFromCheck("secret.env\0vendor/lib.php\0");
+  assert.equal(ignored.has("secret.env"), true);
+  assert.equal(ignored.has("keep.php"), false);
+  assert.equal(sync.inSkipDir("vendor/lib.php"), true);
+  assert.equal(sync.inSkipDir("src/main.php"), false);
+});
+
 test("diffSnapshot computes modified and deleted files", () => {
   const base = sync.hashSnapshot([
     { path: "a.js", content: "1" },

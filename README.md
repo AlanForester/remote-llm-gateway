@@ -1,8 +1,18 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="plugin/media/icon-dark.png">
+    <img src="plugin/media/icon-light.png" width="128" alt="Remote LLM Gateway">
+  </picture>
+</p>
+
 # Remote LLM Gateway
 
 [![Лицензия: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml)
 [![Релиз](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
+[![Звезда на GitHub](https://img.shields.io/github/stars/AlanForester/remote-llm-gateway?style=social)](https://github.com/AlanForester/remote-llm-gateway/stargazers)
+
+Поддержите проект — поставьте [звезду на GitHub](https://github.com/AlanForester/remote-llm-gateway/stargazers).
 
 > **Remote LLM Gateway** — один шлюз для Grok Build, Claude Code и GPT. Плагин в VS Code и Cursor и CLI `remote-llm` работают с локальным проектом, а агенты, инструменты и MCP выполняются на сервере. Проект не связан с xAI, Anthropic, OpenAI и Meta и не представляет их. Имена *Grok*, *Grok Build*, *Claude Code*, *Codex* и *Muse Code* используются только чтобы обозначить совместимость.
 
