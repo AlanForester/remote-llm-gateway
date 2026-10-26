@@ -130,7 +130,7 @@
 
 ## Установка
 
-Релиз [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2) содержит бинарники `remote-llm`, пакет `.vsix` и образы этой версии в GHCR. Плагин в Marketplace не опубликован. Локально сервисы запускаются из исходников.
+В [последнем релизе](https://github.com/AlanForester/remote-llm-gateway/releases/latest) лежат бинарники `remote-llm`, пакет `.vsix` и образы этой версии в GHCR. Плагин опубликован в [Open VSX](https://open-vsx.org/extension/alanforester/remote-llm-gateway). Локально сервисы запускаются из исходников.
 
 ```bash
 cp .env.example .env
@@ -272,7 +272,7 @@ kubectl apply -k deploy
 
 ## Ограничения
 
-- Плагин в Marketplace не опубликован. Готовый `.vsix` лежит в релизе [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2).
+- Плагин есть в [Open VSX](https://open-vsx.org/extension/alanforester/remote-llm-gateway). Готовый `.vsix` лежит в [последнем релизе](https://github.com/AlanForester/remote-llm-gateway/releases/latest).
 - Вход в аккаунт провайдера делается на сервере шлюза, с рабочей машины пользователя этот вход не проходит.
 - GPT подключается через OpenAI Responses API в шлюзе. Отдельного процесса Codex нет.
 

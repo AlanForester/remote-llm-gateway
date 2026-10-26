@@ -132,7 +132,7 @@ For GPT the gateway supplies the tools itself: read, write, and show the session
 
 ## Install
 
-Release [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2) contains the `remote-llm` binaries, a `.vsix` package, and images of that version in GHCR. The plugin is not published to the Marketplace. Locally, the services start from source.
+The [latest release](https://github.com/AlanForester/remote-llm-gateway/releases/latest) contains the `remote-llm` binaries, a `.vsix` package, and container images for that version. The plugin is on [Open VSX](https://open-vsx.org/extension/alanforester/remote-llm-gateway). Locally, the services start from source.
 
 ```bash
 cp .env.example .env
@@ -274,7 +274,7 @@ The default image tag is `main`. Another version is set with `newTag` in [`deplo
 
 ## Limits
 
-- The plugin is not published to the Marketplace. A ready `.vsix` is in release [v0.1.2](https://github.com/AlanForester/remote-llm-gateway/releases/tag/v0.1.2).
+- The plugin is on [Open VSX](https://open-vsx.org/extension/alanforester/remote-llm-gateway). A `.vsix` is also in the [latest release](https://github.com/AlanForester/remote-llm-gateway/releases/latest).
 - Provider account sign-in happens on the gateway server. It does not work from the user's own machine.
 - GPT connects through the OpenAI Responses API inside the gateway. There is no separate Codex process.
 
