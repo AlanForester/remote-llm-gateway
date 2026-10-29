@@ -13,6 +13,7 @@
 [![CI](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/AlanForester/remote-llm-gateway/actions/workflows/ci.yml)
 [![Релиз](https://img.shields.io/github/v/release/AlanForester/remote-llm-gateway)](https://github.com/AlanForester/remote-llm-gateway/releases)
 [![Open VSX](https://img.shields.io/open-vsx/v/alanforester/remote-llm-gateway?label=Open%20VSX)](https://open-vsx.org/extension/alanforester/remote-llm-gateway)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/AlanForester/badge.svg)](https://hub.xerj.org/contributors/AlanForester)
 [![Звезда на GitHub](https://img.shields.io/github/stars/AlanForester/remote-llm-gateway?style=social)](https://github.com/AlanForester/remote-llm-gateway/stargazers)
 
 Поддержите проект — поставьте [звезду на GitHub](https://github.com/AlanForester/remote-llm-gateway/stargazers).
